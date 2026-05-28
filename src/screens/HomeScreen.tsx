@@ -1,4 +1,6 @@
+import { useActionSheet } from '@expo/react-native-action-sheet';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -8,6 +10,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -17,35 +20,58 @@ import type { AppStateStatus } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import NoteCard from '../components/NoteCard';
-import { deleteNote, listNotes, type Note } from '../lib/notes';
+import { listCategories, type Category } from '../lib/categories';
+import {
+  deleteNote,
+  listNotes,
+  updateNote,
+  type Note,
+} from '../lib/notes';
 import { extractInstagramUrl } from '../lib/url';
 import CobaltWebScreen from './CobaltWebScreen';
 import NoteViewerScreen from './NoteViewerScreen';
 
-type FilterTab = 'all' | 'starred';
+type FilterKey =
+  | { kind: 'all' }
+  | { kind: 'starred' }
+  | { kind: 'uncategorized' }
+  | { kind: 'category'; id: string };
 
 export default function HomeScreen() {
+  const { showActionSheetWithOptions } = useActionSheet();
   const [webVisible, setWebVisible] = useState(false);
   const [webSourceUrl, setWebSourceUrl] = useState<string | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const lastHandledRef = useRef<string | null>(null);
 
   const [notes, setNotes] = useState<Note[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeNote, setActiveNote] = useState<Note | null>(null);
   const [query, setQuery] = useState('');
-  const [tab, setTab] = useState<FilterTab>('all');
+  const [filter, setFilter] = useState<FilterKey>({ kind: 'all' });
 
-  const reloadNotes = useCallback(async () => {
-    const ns = await listNotes();
+  const reloadAll = useCallback(async () => {
+    const [ns, cats] = await Promise.all([listNotes(), listCategories()]);
     setNotes(ns);
+    setCategories(cats);
   }, []);
 
   const filteredNotes = useMemo(() => {
     const q = query.trim().toLowerCase();
     return notes.filter((n) => {
-      if (tab === 'starred' && !n.starred) return false;
+      switch (filter.kind) {
+        case 'starred':
+          if (!n.starred) return false;
+          break;
+        case 'uncategorized':
+          if (n.categoryId) return false;
+          break;
+        case 'category':
+          if (n.categoryId !== filter.id) return false;
+          break;
+      }
       if (!q) return true;
       const hay = [n.title, n.author, n.caption, n.note]
         .filter(Boolean)
@@ -53,15 +79,20 @@ export default function HomeScreen() {
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [notes, query, tab]);
+  }, [notes, query, filter]);
 
+  useFocusEffect(
+    useCallback(() => {
+      reloadAll();
+    }, [reloadAll]),
+  );
 
   useEffect(() => {
     (async () => {
-      await reloadNotes();
+      await reloadAll();
       setLoading(false);
     })();
-  }, [reloadNotes]);
+  }, [reloadAll]);
 
   const checkClipboardForInstagram = useCallback(async () => {
     if (Platform.OS === 'ios') {
@@ -81,11 +112,11 @@ export default function HomeScreen() {
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
       if (next === 'active') {
         checkClipboardForInstagram();
-        reloadNotes();
+        reloadAll();
       }
     });
     return () => sub.remove();
-  }, [checkClipboardForInstagram, reloadNotes]);
+  }, [checkClipboardForInstagram, reloadAll]);
 
   const openWebWithPending = () => {
     if (!pendingUrl) return;
@@ -102,7 +133,7 @@ export default function HomeScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await reloadNotes();
+    await reloadAll();
     setRefreshing(false);
   };
 
@@ -120,24 +151,87 @@ export default function HomeScreen() {
           try {
             deleteNote(note);
           } catch {}
-          reloadNotes();
+          reloadAll();
         },
       },
     ]);
   };
+
+  const handleMoveToCategory = useCallback(
+    (note: Note) => {
+      const targets: { id?: string; label: string }[] = [
+        { id: undefined, label: '未分类' },
+        ...categories.map((c) => ({ id: c.id, label: c.name })),
+      ];
+      const currentIndex = targets.findIndex((t) => t.id === note.categoryId);
+      const labels = targets.map((t, i) => {
+        const mark = i === currentIndex ? ' ✓' : '';
+        return `${t.label}${mark}`;
+      });
+      const cancelIndex = labels.length;
+      const options = [...labels, '取消'];
+
+      showActionSheetWithOptions(
+        {
+          title: '移动到分类',
+          message: note.title ?? note.author ?? undefined,
+          options,
+          cancelButtonIndex: cancelIndex,
+          userInterfaceStyle: 'light',
+        },
+        async (selected) => {
+          if (selected === undefined || selected === cancelIndex) return;
+          const target = targets[selected];
+          if (!target) return;
+          if (target.id === note.categoryId) return;
+          await updateNote(note.id, { categoryId: target.id });
+          await reloadAll();
+        },
+      );
+    },
+    [categories, reloadAll, showActionSheetWithOptions],
+  );
 
   const renderItem = ({ item }: { item: Note }) => (
     <NoteCard
       note={item}
       onPress={setActiveNote}
       onDelete={confirmDelete}
+      onLongPress={handleMoveToCategory}
     />
   );
 
-  const tabs: { key: FilterTab; label: string; count: number }[] = [
-    { key: 'all', label: '全部', count: notes.length },
-    { key: 'starred', label: '星标', count: notes.filter((n) => n.starred).length },
+  type TabSpec = { key: string; label: string; count: number; filter: FilterKey; icon?: 'star' };
+  const tabs: TabSpec[] = [
+    { key: 'all', label: '全部', count: notes.length, filter: { kind: 'all' } },
+    {
+      key: 'starred',
+      label: '星标',
+      count: notes.filter((n) => n.starred).length,
+      filter: { kind: 'starred' },
+      icon: 'star',
+    },
+    {
+      key: 'uncategorized',
+      label: '未分类',
+      count: notes.filter((n) => !n.categoryId).length,
+      filter: { kind: 'uncategorized' },
+    },
+    ...categories.map((c) => ({
+      key: `cat:${c.id}`,
+      label: c.name,
+      count: notes.filter((n) => n.categoryId === c.id).length,
+      filter: { kind: 'category' as const, id: c.id },
+    })),
   ];
+
+  const isActive = (t: TabSpec) => {
+    if (filter.kind !== t.filter.kind) return false;
+    if (filter.kind === 'category' && t.filter.kind === 'category') {
+      return filter.id === t.filter.id;
+    }
+    return true;
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -172,16 +266,22 @@ export default function HomeScreen() {
         )}
       </View>
 
-      <View style={styles.tabsRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabsRow}
+        style={styles.tabsScroll}
+        keyboardShouldPersistTaps="handled"
+      >
         {tabs.map((t) => {
-          const active = tab === t.key;
+          const active = isActive(t);
           return (
             <Pressable
               key={t.key}
-              onPress={() => setTab(t.key)}
+              onPress={() => setFilter(t.filter)}
               style={[styles.tabBtn, active && styles.tabBtnActive]}
             >
-              {t.key === 'starred' && (
+              {t.icon === 'star' && (
                 <Ionicons
                   name="star"
                   size={12}
@@ -196,7 +296,7 @@ export default function HomeScreen() {
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
 
       {pendingUrl && (
         <View style={styles.banner}>
@@ -250,7 +350,7 @@ export default function HomeScreen() {
                 <>
                   <Text style={styles.emptyTitle}>没找到匹配的笔记</Text>
                   <Text style={styles.emptyHint}>
-                    换个关键词，或切到「全部」Tab
+                    换个关键词，或切换上方分类
                   </Text>
                 </>
               )}
@@ -264,7 +364,7 @@ export default function HomeScreen() {
         sourceUrl={webSourceUrl}
         onClose={async () => {
           setWebVisible(false);
-          await reloadNotes();
+          await reloadAll();
         }}
       />
 
@@ -325,11 +425,18 @@ const styles = StyleSheet.create({
     color: '#111',
     paddingVertical: 0,
   },
+  tabsScroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+    height: 44,
+    marginTop: 10,
+    marginBottom: 8,
+  },
   tabsRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
     paddingHorizontal: 20,
-    marginTop: 10,
   },
   tabBtn: {
     flexDirection: 'row',

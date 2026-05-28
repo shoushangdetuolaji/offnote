@@ -14,6 +14,7 @@ import { WebView } from 'react-native-webview';
 import type { WebViewMessageEvent, WebViewNavigation } from 'react-native-webview';
 
 import RenameModal from '../components/RenameModal';
+import { listCategories, type Category } from '../lib/categories';
 import { fetchIgMetadata, type IgMetadata } from '../lib/metadata';
 import { createNote, type MediaInput, type MediaKind } from '../lib/notes';
 
@@ -166,6 +167,7 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
   const [showRename, setShowRename] = useState(false);
   const [metadata, setMetadata] = useState<IgMetadata | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
 
   useEffect(() => {
     if (!visible) return;
@@ -173,6 +175,7 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
     setItems([]);
     setMetadata(null);
     setShowRename(false);
+    listCategories().then(setCategories);
     if (!sourceUrl) return;
     setMetaLoading(true);
     fetchIgMetadata(sourceUrl)
@@ -243,13 +246,18 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
     setItems([]);
   };
 
-  const handleConfirmName = async (finalName: string, note: string) => {
+  const handleConfirmName = async (
+    finalName: string,
+    note: string,
+    categoryId?: string,
+  ) => {
     setShowRename(false);
     setBusyMsg('正在保存…');
     const titleOnly = finalName.replace(/\.[A-Za-z0-9]+$/, '');
     const result = await createNote({
       title: titleOnly,
       note,
+      categoryId,
       items,
       metadata,
       onItemProgress: (i, total, f) => {
@@ -348,6 +356,7 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
           hintExt={hintExt}
           metadata={metadata}
           metadataLoading={metaLoading}
+          categories={categories}
           onCancel={() => setShowRename(false)}
           onConfirm={handleConfirmName}
         />

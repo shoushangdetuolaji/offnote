@@ -12,45 +12,52 @@ import {
   View,
 } from 'react-native';
 
+import type { Category } from '../lib/categories';
 import type { IgMetadata } from '../lib/metadata';
 
 type Props = {
   visible: boolean;
   defaultName: string;
   defaultNote?: string;
+  defaultCategoryId?: string;
   hintExt?: string;
   metadata?: IgMetadata | null;
   metadataLoading?: boolean;
+  categories?: Category[];
   onCancel: () => void;
-  onConfirm: (name: string, note: string) => void;
+  onConfirm: (name: string, note: string, categoryId?: string) => void;
 };
 
 export default function RenameModal({
   visible,
   defaultName,
   defaultNote,
+  defaultCategoryId,
   hintExt,
   metadata,
   metadataLoading,
+  categories,
   onCancel,
   onConfirm,
 }: Props) {
   const [name, setName] = useState('');
   const [note, setNote] = useState('');
+  const [categoryId, setCategoryId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (visible) {
       setName(stripExt(defaultName));
       setNote(defaultNote ?? '');
+      setCategoryId(defaultCategoryId);
     }
-  }, [visible, defaultName, defaultNote]);
+  }, [visible, defaultName, defaultNote, defaultCategoryId]);
 
   const ext = hintExt ?? extractExt(defaultName);
 
   const confirm = () => {
     const cleaned = name.trim().replace(/[/\\:?*"<>|]/g, '').slice(0, 80);
     const final = cleaned ? `${cleaned}.${ext}` : defaultName;
-    onConfirm(final, note.trim());
+    onConfirm(final, note.trim(), categoryId);
   };
 
   return (
@@ -117,6 +124,27 @@ export default function RenameModal({
               style={styles.textArea}
             />
 
+            {categories && (
+              <>
+                <Text style={[styles.label, styles.labelSpaced]}>分类</Text>
+                <View style={styles.chipsRow}>
+                  <Chip
+                    label="未分类"
+                    active={!categoryId}
+                    onPress={() => setCategoryId(undefined)}
+                  />
+                  {categories.map((c) => (
+                    <Chip
+                      key={c.id}
+                      label={c.name}
+                      active={categoryId === c.id}
+                      onPress={() => setCategoryId(c.id)}
+                    />
+                  ))}
+                </View>
+              </>
+            )}
+
             <View style={styles.actions}>
               <Pressable onPress={onCancel} style={[styles.btn, styles.btnGhost]}>
                 <Text style={styles.btnGhostText}>取消</Text>
@@ -139,6 +167,25 @@ function extractExt(filename: string): string {
 
 function stripExt(filename: string): string {
   return filename.replace(/\.[A-Za-z0-9]+$/, '');
+}
+
+type ChipProps = {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+};
+
+function Chip({ label, active, onPress }: ChipProps) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.chip, active && styles.chipActive]}
+    >
+      <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -198,6 +245,32 @@ const styles = StyleSheet.create({
   },
   labelSpaced: {
     marginTop: 14,
+  },
+  chipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#f3f4f6',
+    maxWidth: 160,
+  },
+  chipActive: {
+    backgroundColor: '#111',
+    borderColor: '#111',
+  },
+  chipText: {
+    fontSize: 13,
+    color: '#444',
+  },
+  chipTextActive: {
+    color: '#fff',
+    fontWeight: '600',
   },
   textArea: {
     minHeight: 64,

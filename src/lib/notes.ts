@@ -19,6 +19,8 @@ export type Note = {
   /** user-written memo, separate from IG caption */
   note?: string;
   starred?: boolean;
+  /** id of the category this note belongs to, undefined = uncategorized */
+  categoryId?: string;
   sourceUrl?: string;
   media: NoteMedia[];
   thumbnailFilename?: string;
@@ -67,6 +69,8 @@ export type CreateNoteInput = {
   title: string;
   /** optional user-written memo */
   note?: string;
+  /** optional category id to assign */
+  categoryId?: string;
   items: MediaInput[];
   metadata?: IgMetadata | null;
   onItemProgress?: (index: number, total: number, fraction: number) => void;
@@ -96,8 +100,8 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
 
     try {
       if (item.source.type === 'remote') {
+        if (file.exists) file.delete();
         const task = File.createDownloadTask(item.source.url, file, {
-          idempotent: true,
           onProgress: ({ bytesWritten, totalBytes }) => {
             const t = totalBytes || 0;
             const fraction = t > 0 ? (bytesWritten || 0) / t : 0;
@@ -119,11 +123,10 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
   if (input.metadata?.thumbnailUrl) {
     try {
       const thumb = new File(dir, 'thumb.jpg');
-      const task = File.createDownloadTask(input.metadata.thumbnailUrl, thumb, {
-        idempotent: true,
-      });
+      if (thumb.exists) thumb.delete();
+      const task = File.createDownloadTask(input.metadata.thumbnailUrl, thumb, {});
       const f = await task.downloadAsync();
-      thumbnailFilename = f.name;
+      thumbnailFilename = f?.name ?? 'thumb.jpg';
     } catch {
       // optional
     }
@@ -139,6 +142,7 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     createdAt,
     title: input.title.trim() || undefined,
     note: input.note?.trim() || undefined,
+    categoryId: input.categoryId,
     author: input.metadata?.author,
     caption: input.metadata?.caption,
     sourceUrl: input.metadata?.sourceUrl,
@@ -193,7 +197,7 @@ export async function listNotes(): Promise<Note[]> {
 }
 
 export type NotePatch = Partial<
-  Pick<Note, 'title' | 'note' | 'starred' | 'caption'>
+  Pick<Note, 'title' | 'note' | 'starred' | 'caption' | 'categoryId'>
 >;
 
 export async function updateNote(
@@ -243,4 +247,17 @@ export async function updateNote(
 export function deleteNote(note: Note): void {
   const dir = new Directory(rootDir(), note.id);
   if (dir.exists) dir.delete();
+}
+
+/** Remove categoryId from all notes that currently reference the given id. */
+export async function clearCategoryFromNotes(categoryId: string): Promise<number> {
+  const notes = await listNotes();
+  let count = 0;
+  for (const n of notes) {
+    if (n.categoryId === categoryId) {
+      await updateNote(n.id, { categoryId: undefined });
+      count++;
+    }
+  }
+  return count;
 }

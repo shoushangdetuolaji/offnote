@@ -1,11 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 
+import CategoriesScreen from '../screens/CategoriesScreen';
 import HomeScreen from '../screens/HomeScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 
 export type RootTabParamList = {
   Home: undefined;
+  Categories: undefined;
   Settings: undefined;
 };
 
@@ -27,6 +29,16 @@ export default function RootTabs() {
           title: '首页',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home-outline" color={color} size={size} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Categories"
+        component={CategoriesScreen}
+        options={{
+          title: '分类',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="folder-outline" color={color} size={size} />
           ),
         }}
       />

@@ -1,3 +1,4 @@
+import { ActionSheetProvider } from '@expo/react-native-action-sheet';
 import { NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -9,10 +10,12 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavigationContainer>
-          <RootTabs />
-          <StatusBar style="auto" />
-        </NavigationContainer>
+        <ActionSheetProvider>
+          <NavigationContainer>
+            <RootTabs />
+            <StatusBar style="auto" />
+          </NavigationContainer>
+        </ActionSheetProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
