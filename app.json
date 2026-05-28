@@ -20,6 +20,16 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "OffNote 需要访问相册以保存你下载的视频和图片",
+          "savePhotosPermission": "OffNote 需要保存下载的视频和图片到你的相册",
+          "isAccessMediaLocationEnabled": false
+        }
+      ]
+    ]
   }
 }

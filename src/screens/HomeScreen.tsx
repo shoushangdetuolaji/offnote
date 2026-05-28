@@ -1,0 +1,404 @@
+import * as Clipboard from 'expo-clipboard';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  AppState,
+  FlatList,
+  Image,
+  Platform,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import type { AppStateStatus } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { deleteNote, listNotes, type Note } from '../lib/notes';
+import { extractInstagramUrl } from '../lib/url';
+import CobaltWebScreen from './CobaltWebScreen';
+import NoteViewerScreen from './NoteViewerScreen';
+
+export default function HomeScreen() {
+  const [webVisible, setWebVisible] = useState(false);
+  const [webSourceUrl, setWebSourceUrl] = useState<string | null>(null);
+  const [pendingUrl, setPendingUrl] = useState<string | null>(null);
+  const lastHandledRef = useRef<string | null>(null);
+
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [activeNote, setActiveNote] = useState<Note | null>(null);
+
+  const reloadNotes = useCallback(async () => {
+    const ns = await listNotes();
+    setNotes(ns);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      await reloadNotes();
+      setLoading(false);
+    })();
+  }, [reloadNotes]);
+
+  const checkClipboardForInstagram = useCallback(async () => {
+    if (Platform.OS === 'ios') {
+      const hasUrl = await Clipboard.hasUrlAsync();
+      if (!hasUrl) return;
+    }
+    const text = await Clipboard.getStringAsync();
+    const url = extractInstagramUrl(text);
+    if (!url) return;
+    if (lastHandledRef.current === url) return;
+    lastHandledRef.current = url;
+    setPendingUrl(url);
+  }, []);
+
+  useEffect(() => {
+    checkClipboardForInstagram();
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (next === 'active') {
+        checkClipboardForInstagram();
+        reloadNotes();
+      }
+    });
+    return () => sub.remove();
+  }, [checkClipboardForInstagram, reloadNotes]);
+
+  const openWebWithPending = () => {
+    if (!pendingUrl) return;
+    setWebSourceUrl(pendingUrl);
+    setPendingUrl(null);
+    setWebVisible(true);
+  };
+
+  const openWebManually = async () => {
+    const text = await Clipboard.getStringAsync().catch(() => '');
+    setWebSourceUrl(extractInstagramUrl(text) ?? null);
+    setWebVisible(true);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await reloadNotes();
+    setRefreshing(false);
+  };
+
+  const handleDeleteNote = (note: Note) => {
+    Alert.alert('删除这条笔记？', note.title ?? note.id, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () => {
+          try {
+            deleteNote(note);
+          } catch {}
+          reloadNotes();
+        },
+      },
+    ]);
+  };
+
+  const renderItem = ({ item }: { item: Note }) => {
+    const thumbUri =
+      item.thumbnailFilename && `${item.dirUri}${item.thumbnailFilename}`;
+    const total = item.media?.length ?? 0;
+    const hasVideo = item.media?.some((m) => m.kind === 'video');
+    const placeholderEmoji = total === 0 ? '📝' : hasVideo ? '🎬' : '🖼️';
+    return (
+      <Pressable
+        onPress={() => setActiveNote(item)}
+        onLongPress={() => handleDeleteNote(item)}
+        style={styles.card}
+      >
+        <View style={styles.thumbBox}>
+          {thumbUri ? (
+            <Image source={{ uri: thumbUri }} style={styles.thumb} />
+          ) : (
+            <View style={styles.thumbPlaceholder}>
+              <Text style={styles.thumbPlaceholderText}>{placeholderEmoji}</Text>
+            </View>
+          )}
+          {hasVideo && (
+            <View style={styles.videoBadge}>
+              <Text style={styles.videoBadgeText}>视频</Text>
+            </View>
+          )}
+          {total > 1 && (
+            <View style={styles.countBadge}>
+              <Text style={styles.countBadgeText}>{total} 项</Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.cardBody}>
+          {item.author && (
+            <Text style={styles.cardAuthor}>@{item.author}</Text>
+          )}
+          <Text style={styles.cardCaption} numberOfLines={2}>
+            {item.caption || item.title || item.id}
+          </Text>
+          <Text style={styles.cardMeta}>{formatDate(item.createdAt)}</Text>
+        </View>
+      </Pressable>
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <View style={styles.header}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>OffNote</Text>
+          <Text style={styles.subtitle}>
+            {notes.length > 0 ? `${notes.length} 条离线笔记` : '保存随时可离线读'}
+          </Text>
+        </View>
+        <Pressable onPress={openWebManually} style={styles.headerCta}>
+          <Text style={styles.headerCtaText}>+ 新增</Text>
+        </Pressable>
+      </View>
+
+      {pendingUrl && (
+        <View style={styles.banner}>
+          <Text style={styles.bannerTitle}>剪贴板里有 Instagram 链接</Text>
+          <Text style={styles.bannerUrl} numberOfLines={1}>
+            {pendingUrl}
+          </Text>
+          <View style={styles.bannerActions}>
+            <Pressable
+              onPress={() => {
+                lastHandledRef.current = null;
+                setPendingUrl(null);
+              }}
+              style={[styles.smallBtn, styles.smallBtnGhost]}
+            >
+              <Text style={styles.smallBtnGhostText}>忽略</Text>
+            </Pressable>
+            <Pressable
+              onPress={openWebWithPending}
+              style={[styles.smallBtn, styles.smallBtnPrimary]}
+            >
+              <Text style={styles.smallBtnPrimaryText}>下载</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      <FlatList
+        data={notes}
+        keyExtractor={(n) => n.id}
+        renderItem={renderItem}
+        contentContainerStyle={[
+          styles.listContent,
+          notes.length === 0 && styles.listContentEmpty,
+        ]}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
+        ListEmptyComponent={
+          !loading ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyTitle}>还没有离线笔记</Text>
+              <Text style={styles.emptyHint}>
+                复制 Instagram 链接 → 点右上「+ 新增」开始保存
+              </Text>
+            </View>
+          ) : null
+        }
+      />
+
+      <CobaltWebScreen
+        visible={webVisible}
+        sourceUrl={webSourceUrl}
+        onClose={async () => {
+          setWebVisible(false);
+          await reloadNotes();
+        }}
+      />
+
+      <NoteViewerScreen
+        note={activeNote}
+        onClose={() => setActiveNote(null)}
+      />
+    </SafeAreaView>
+  );
+}
+
+function formatDate(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: '#888',
+  },
+  headerCta: {
+    backgroundColor: '#111',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  headerCtaText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  banner: {
+    marginHorizontal: 20,
+    backgroundColor: '#f6f8fb',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#e6ecf2',
+    marginTop: 10,
+  },
+  bannerTitle: {
+    fontSize: 13,
+    color: '#444',
+    marginBottom: 4,
+  },
+  bannerUrl: {
+    fontSize: 12,
+    color: '#111',
+    marginBottom: 12,
+  },
+  bannerActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  smallBtn: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  smallBtnPrimary: { backgroundColor: '#111' },
+  smallBtnPrimaryText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  smallBtnGhost: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#dcdcdc' },
+  smallBtnGhostText: { color: '#444', fontSize: 13 },
+  listContent: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 32,
+  },
+  listContentEmpty: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  card: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#eee',
+    padding: 10,
+    marginBottom: 12,
+  },
+  thumbBox: {
+    width: 96,
+    height: 96,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#f0f0f0',
+    marginRight: 12,
+    position: 'relative',
+  },
+  thumb: {
+    width: '100%',
+    height: '100%',
+  },
+  thumbPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbPlaceholderText: {
+    fontSize: 32,
+  },
+  videoBadge: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  videoBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  countBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  countBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  cardBody: {
+    flex: 1,
+    paddingVertical: 2,
+  },
+  cardAuthor: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111',
+    marginBottom: 4,
+  },
+  cardCaption: {
+    fontSize: 13,
+    color: '#444',
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  cardMeta: {
+    fontSize: 11,
+    color: '#999',
+    marginTop: 'auto',
+  },
+  empty: {
+    alignItems: 'center',
+    paddingHorizontal: 30,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  emptyHint: {
+    fontSize: 13,
+    color: '#888',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+});
