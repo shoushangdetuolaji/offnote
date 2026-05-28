@@ -4,7 +4,6 @@ import {
   Alert,
   AppState,
   FlatList,
-  Image,
   Platform,
   Pressable,
   RefreshControl,
@@ -15,6 +14,7 @@ import {
 import type { AppStateStatus } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import NoteCard from '../components/NoteCard';
 import { deleteNote, listNotes, type Note } from '../lib/notes';
 import { extractInstagramUrl } from '../lib/url';
 import CobaltWebScreen from './CobaltWebScreen';
@@ -86,9 +86,13 @@ export default function HomeScreen() {
     setRefreshing(false);
   };
 
-  const handleDeleteNote = (note: Note) => {
+  const confirmDelete = (note: Note, closeSwipe?: () => void) => {
     Alert.alert('删除这条笔记？', note.title ?? note.id, [
-      { text: '取消', style: 'cancel' },
+      {
+        text: '取消',
+        style: 'cancel',
+        onPress: () => closeSwipe?.(),
+      },
       {
         text: '删除',
         style: 'destructive',
@@ -102,49 +106,13 @@ export default function HomeScreen() {
     ]);
   };
 
-  const renderItem = ({ item }: { item: Note }) => {
-    const thumbUri =
-      item.thumbnailFilename && `${item.dirUri}${item.thumbnailFilename}`;
-    const total = item.media?.length ?? 0;
-    const hasVideo = item.media?.some((m) => m.kind === 'video');
-    const placeholderEmoji = total === 0 ? '📝' : hasVideo ? '🎬' : '🖼️';
-    return (
-      <Pressable
-        onPress={() => setActiveNote(item)}
-        onLongPress={() => handleDeleteNote(item)}
-        style={styles.card}
-      >
-        <View style={styles.thumbBox}>
-          {thumbUri ? (
-            <Image source={{ uri: thumbUri }} style={styles.thumb} />
-          ) : (
-            <View style={styles.thumbPlaceholder}>
-              <Text style={styles.thumbPlaceholderText}>{placeholderEmoji}</Text>
-            </View>
-          )}
-          {hasVideo && (
-            <View style={styles.videoBadge}>
-              <Text style={styles.videoBadgeText}>视频</Text>
-            </View>
-          )}
-          {total > 1 && (
-            <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>{total} 项</Text>
-            </View>
-          )}
-        </View>
-        <View style={styles.cardBody}>
-          {item.author && (
-            <Text style={styles.cardAuthor}>@{item.author}</Text>
-          )}
-          <Text style={styles.cardCaption} numberOfLines={2}>
-            {item.caption || item.title || item.id}
-          </Text>
-          <Text style={styles.cardMeta}>{formatDate(item.createdAt)}</Text>
-        </View>
-      </Pressable>
-    );
-  };
+  const renderItem = ({ item }: { item: Note }) => (
+    <NoteCard
+      note={item}
+      onPress={setActiveNote}
+      onDelete={confirmDelete}
+    />
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -226,12 +194,6 @@ export default function HomeScreen() {
   );
 }
 
-function formatDate(ts: number): string {
-  const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -305,85 +267,6 @@ const styles = StyleSheet.create({
   listContentEmpty: {
     flexGrow: 1,
     justifyContent: 'center',
-  },
-  card: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#eee',
-    padding: 10,
-    marginBottom: 12,
-  },
-  thumbBox: {
-    width: 96,
-    height: 96,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#f0f0f0',
-    marginRight: 12,
-    position: 'relative',
-  },
-  thumb: {
-    width: '100%',
-    height: '100%',
-  },
-  thumbPlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  thumbPlaceholderText: {
-    fontSize: 32,
-  },
-  videoBadge: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  videoBadgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  countBadge: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  countBadgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  cardBody: {
-    flex: 1,
-    paddingVertical: 2,
-  },
-  cardAuthor: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111',
-    marginBottom: 4,
-  },
-  cardCaption: {
-    fontSize: 13,
-    color: '#444',
-    lineHeight: 18,
-    marginBottom: 6,
-  },
-  cardMeta: {
-    fontSize: 11,
-    color: '#999',
-    marginTop: 'auto',
   },
   empty: {
     alignItems: 'center',
