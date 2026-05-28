@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useRef, useState } from 'react';
 import {
   Alert,
@@ -22,12 +23,16 @@ import {
   type Category,
 } from '../lib/categories';
 import { clearCategoryFromNotes, listNotes, type Note } from '../lib/notes';
+import type { CategoriesStackParamList } from '../navigation/CategoriesStack';
 
 type EditTarget =
   | { mode: 'create' }
   | { mode: 'rename'; category: Category };
 
+type Nav = NativeStackNavigationProp<CategoriesStackParamList, 'CategoriesList'>;
+
 export default function CategoriesScreen() {
+  const navigation = useNavigation<Nav>();
   const [categories, setCategories] = useState<Category[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [edit, setEdit] = useState<EditTarget | null>(null);
@@ -78,10 +83,18 @@ export default function CategoriesScreen() {
     ]);
   };
 
+  const openCategory = (cat: Category) => {
+    navigation.navigate('CategoryNotes', {
+      categoryId: cat.id,
+      categoryName: cat.name,
+    });
+  };
+
   const renderItem = ({ item }: { item: Category }) => (
     <CategoryRow
       category={item}
       count={countByCategory(item.id)}
+      onPress={() => openCategory(item)}
       onRename={() => setEdit({ mode: 'rename', category: item })}
       onDelete={handleDelete}
     />
@@ -101,11 +114,20 @@ export default function CategoriesScreen() {
       </View>
 
       <View style={styles.uncategorized}>
-        <View style={styles.row}>
+        <Pressable
+          onPress={() =>
+            navigation.navigate('CategoryNotes', {
+              categoryId: '__uncategorized__',
+              categoryName: '未分类',
+            })
+          }
+          style={styles.row}
+        >
           <Ionicons name="albums-outline" size={20} color="#666" />
           <Text style={styles.uncategorizedName}>未分类</Text>
           <Text style={styles.count}>{countByCategory(undefined)}</Text>
-        </View>
+          <Ionicons name="chevron-forward" size={18} color="#bbb" />
+        </Pressable>
       </View>
 
       <FlatList
@@ -140,11 +162,12 @@ export default function CategoriesScreen() {
 type RowProps = {
   category: Category;
   count: number;
+  onPress: () => void;
   onRename: () => void;
   onDelete: (cat: Category, closeSwipe: () => void) => void;
 };
 
-function CategoryRow({ category, count, onRename, onDelete }: RowProps) {
+function CategoryRow({ category, count, onPress, onRename, onDelete }: RowProps) {
   const swipeRef = useRef<SwipeableMethods>(null);
   const close = () => swipeRef.current?.close();
 
@@ -178,12 +201,17 @@ function CategoryRow({ category, count, onRename, onDelete }: RowProps) {
       overshootRight={false}
       renderRightActions={renderActions}
     >
-      <Pressable onPress={onRename} style={styles.row}>
+      <Pressable
+        onPress={onPress}
+        onLongPress={onRename}
+        style={styles.row}
+      >
         <Ionicons name="folder" size={20} color="#f5b400" />
         <Text style={styles.rowName} numberOfLines={1}>
           {category.name}
         </Text>
         <Text style={styles.count}>{count}</Text>
+        <Ionicons name="chevron-forward" size={18} color="#bbb" />
       </Pressable>
     </Swipeable>
   );

@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 
-import CategoriesScreen from '../screens/CategoriesScreen';
 import HomeScreen from '../screens/HomeScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import CategoriesStack from './CategoriesStack';
 
 export type RootTabParamList = {
   Home: undefined;
@@ -34,7 +34,7 @@ export default function RootTabs() {
       />
       <Tab.Screen
         name="Categories"
-        component={CategoriesScreen}
+        component={CategoriesStack}
         options={{
           title: '分类',
           tabBarIcon: ({ color, size }) => (
