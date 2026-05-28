@@ -17,16 +17,18 @@ import type { IgMetadata } from '../lib/metadata';
 type Props = {
   visible: boolean;
   defaultName: string;
+  defaultNote?: string;
   hintExt?: string;
   metadata?: IgMetadata | null;
   metadataLoading?: boolean;
   onCancel: () => void;
-  onConfirm: (name: string) => void;
+  onConfirm: (name: string, note: string) => void;
 };
 
 export default function RenameModal({
   visible,
   defaultName,
+  defaultNote,
   hintExt,
   metadata,
   metadataLoading,
@@ -34,19 +36,21 @@ export default function RenameModal({
   onConfirm,
 }: Props) {
   const [name, setName] = useState('');
+  const [note, setNote] = useState('');
 
   useEffect(() => {
     if (visible) {
       setName(stripExt(defaultName));
+      setNote(defaultNote ?? '');
     }
-  }, [visible, defaultName]);
+  }, [visible, defaultName, defaultNote]);
 
   const ext = hintExt ?? extractExt(defaultName);
 
   const confirm = () => {
     const cleaned = name.trim().replace(/[/\\:?*"<>|]/g, '').slice(0, 80);
     const final = cleaned ? `${cleaned}.${ext}` : defaultName;
-    onConfirm(final);
+    onConfirm(final, note.trim());
   };
 
   return (
@@ -89,12 +93,12 @@ export default function RenameModal({
               </View>
             )}
 
-            <Text style={styles.label}>文件名</Text>
+            <Text style={styles.label}>标题</Text>
             <View style={styles.inputRow}>
               <TextInput
                 value={name}
                 onChangeText={setName}
-                placeholder="输入文件名"
+                placeholder="输入标题"
                 placeholderTextColor="#aaa"
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -102,6 +106,16 @@ export default function RenameModal({
               />
               <Text style={styles.extLabel}>.{ext}</Text>
             </View>
+
+            <Text style={[styles.label, styles.labelSpaced]}>备注（可选）</Text>
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              placeholder="给自己留点话"
+              placeholderTextColor="#aaa"
+              multiline
+              style={styles.textArea}
+            />
 
             <View style={styles.actions}>
               <Pressable onPress={onCancel} style={[styles.btn, styles.btnGhost]}>
@@ -181,6 +195,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginBottom: 6,
+  },
+  labelSpaced: {
+    marginTop: 14,
+  },
+  textArea: {
+    minHeight: 64,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#111',
+    textAlignVertical: 'top',
   },
   inputRow: {
     flexDirection: 'row',

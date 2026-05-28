@@ -1,5 +1,6 @@
+import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AppState,
@@ -9,6 +10,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import type { AppStateStatus } from 'react-native';
@@ -20,6 +22,8 @@ import { extractInstagramUrl } from '../lib/url';
 import CobaltWebScreen from './CobaltWebScreen';
 import NoteViewerScreen from './NoteViewerScreen';
 
+type FilterTab = 'all' | 'starred';
+
 export default function HomeScreen() {
   const [webVisible, setWebVisible] = useState(false);
   const [webSourceUrl, setWebSourceUrl] = useState<string | null>(null);
@@ -30,11 +34,27 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeNote, setActiveNote] = useState<Note | null>(null);
+  const [query, setQuery] = useState('');
+  const [tab, setTab] = useState<FilterTab>('all');
 
   const reloadNotes = useCallback(async () => {
     const ns = await listNotes();
     setNotes(ns);
   }, []);
+
+  const filteredNotes = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return notes.filter((n) => {
+      if (tab === 'starred' && !n.starred) return false;
+      if (!q) return true;
+      const hay = [n.title, n.author, n.caption, n.note]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [notes, query, tab]);
+
 
   useEffect(() => {
     (async () => {
@@ -114,6 +134,11 @@ export default function HomeScreen() {
     />
   );
 
+  const tabs: { key: FilterTab; label: string; count: number }[] = [
+    { key: 'all', label: '全部', count: notes.length },
+    { key: 'starred', label: '星标', count: notes.filter((n) => n.starred).length },
+  ];
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
@@ -126,6 +151,51 @@ export default function HomeScreen() {
         <Pressable onPress={openWebManually} style={styles.headerCta}>
           <Text style={styles.headerCtaText}>+ 新增</Text>
         </Pressable>
+      </View>
+
+      <View style={styles.searchBox}>
+        <Ionicons name="search-outline" size={16} color="#888" />
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="搜索标题、作者、文案或备注"
+          placeholderTextColor="#999"
+          style={styles.searchInput}
+          returnKeyType="search"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {query.length > 0 && (
+          <Pressable onPress={() => setQuery('')} hitSlop={6}>
+            <Ionicons name="close-circle" size={16} color="#bbb" />
+          </Pressable>
+        )}
+      </View>
+
+      <View style={styles.tabsRow}>
+        {tabs.map((t) => {
+          const active = tab === t.key;
+          return (
+            <Pressable
+              key={t.key}
+              onPress={() => setTab(t.key)}
+              style={[styles.tabBtn, active && styles.tabBtnActive]}
+            >
+              {t.key === 'starred' && (
+                <Ionicons
+                  name="star"
+                  size={12}
+                  color={active ? '#fff' : '#f5b400'}
+                  style={{ marginRight: 4 }}
+                />
+              )}
+              <Text style={[styles.tabText, active && styles.tabTextActive]}>
+                {t.label}
+                {t.count > 0 ? ` ${t.count}` : ''}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {pendingUrl && (
@@ -155,23 +225,35 @@ export default function HomeScreen() {
       )}
 
       <FlatList
-        data={notes}
+        data={filteredNotes}
         keyExtractor={(n) => n.id}
         renderItem={renderItem}
         contentContainerStyle={[
           styles.listContent,
-          notes.length === 0 && styles.listContentEmpty,
+          filteredNotes.length === 0 && styles.listContentEmpty,
         ]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
+        keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
           !loading ? (
             <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>还没有离线笔记</Text>
-              <Text style={styles.emptyHint}>
-                复制 Instagram 链接 → 点右上「+ 新增」开始保存
-              </Text>
+              {notes.length === 0 ? (
+                <>
+                  <Text style={styles.emptyTitle}>还没有离线笔记</Text>
+                  <Text style={styles.emptyHint}>
+                    复制 Instagram 链接 → 点右上「+ 新增」开始保存
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.emptyTitle}>没找到匹配的笔记</Text>
+                  <Text style={styles.emptyHint}>
+                    换个关键词，或切到「全部」Tab
+                  </Text>
+                </>
+              )}
             </View>
           ) : null
         }
@@ -224,6 +306,48 @@ const styles = StyleSheet.create({
   headerCtaText: {
     color: '#fff',
     fontSize: 13,
+    fontWeight: '600',
+  },
+  searchBox: {
+    marginHorizontal: 20,
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#111',
+    paddingVertical: 0,
+  },
+  tabsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 20,
+    marginTop: 10,
+  },
+  tabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#f3f4f6',
+  },
+  tabBtnActive: {
+    backgroundColor: '#111',
+  },
+  tabText: {
+    fontSize: 13,
+    color: '#444',
+  },
+  tabTextActive: {
+    color: '#fff',
     fontWeight: '600',
   },
   banner: {

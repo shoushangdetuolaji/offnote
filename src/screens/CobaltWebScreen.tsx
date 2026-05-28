@@ -243,12 +243,13 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
     setItems([]);
   };
 
-  const handleConfirmName = async (finalName: string) => {
+  const handleConfirmName = async (finalName: string, note: string) => {
     setShowRename(false);
     setBusyMsg('正在保存…');
     const titleOnly = finalName.replace(/\.[A-Za-z0-9]+$/, '');
     const result = await createNote({
       title: titleOnly,
+      note,
       items,
       metadata,
       onItemProgress: (i, total, f) => {

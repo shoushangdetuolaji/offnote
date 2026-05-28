@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRef } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
@@ -12,9 +13,13 @@ type Props = {
   onLongPress?: (note: Note) => void;
 };
 
-export default function NoteCard({ note, onPress, onDelete, onLongPress }: Props) {
+export default function NoteCard({
+  note,
+  onPress,
+  onDelete,
+  onLongPress,
+}: Props) {
   const swipeRef = useRef<SwipeableMethods>(null);
-
   const closeSwipe = () => swipeRef.current?.close();
 
   const thumbUri =
@@ -32,10 +37,13 @@ export default function NoteCard({ note, onPress, onDelete, onLongPress }: Props
           pressed && styles.deleteBtnPressed,
         ]}
       >
+        <Ionicons name="trash-outline" size={20} color="#fff" />
         <Text style={styles.deleteText}>删除</Text>
       </Pressable>
     </View>
   );
+
+  const bodyText = note.caption || note.note || note.title || note.id;
 
   return (
     <View style={styles.wrapper}>
@@ -70,13 +78,30 @@ export default function NoteCard({ note, onPress, onDelete, onLongPress }: Props
               </View>
             )}
           </View>
+
           <View style={styles.cardBody}>
-            {note.author && (
+            <View style={styles.headerRow}>
+              <Text style={styles.cardTitle} numberOfLines={1}>
+                {note.title || (note.author ? `@${note.author}` : '未命名')}
+              </Text>
+              {note.starred && (
+                <Ionicons
+                  name="star"
+                  size={14}
+                  color="#f5b400"
+                  style={styles.starredHint}
+                />
+              )}
+            </View>
+
+            {note.author && note.title && (
               <Text style={styles.cardAuthor}>@{note.author}</Text>
             )}
+
             <Text style={styles.cardCaption} numberOfLines={2}>
-              {note.caption || note.title || note.id}
+              {bodyText}
             </Text>
+
             <Text style={styles.cardMeta}>{formatDate(note.createdAt)}</Text>
           </View>
         </Pressable>
@@ -142,10 +167,23 @@ const styles = StyleSheet.create({
   },
   countBadgeText: { color: '#fff', fontSize: 10, fontWeight: '600' },
   cardBody: { flex: 1, paddingVertical: 2 },
-  cardAuthor: {
-    fontSize: 13,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  cardTitle: {
+    flex: 1,
+    fontSize: 14,
     fontWeight: '600',
     color: '#111',
+  },
+  starredHint: {
+    marginLeft: 6,
+  },
+  cardAuthor: {
+    fontSize: 12,
+    color: '#888',
     marginBottom: 4,
   },
   cardCaption: {
@@ -169,13 +207,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#e23b3b',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 2,
   },
   deleteBtnPressed: {
     backgroundColor: '#bf2929',
   },
   deleteText: {
     color: '#fff',
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
   },
 });

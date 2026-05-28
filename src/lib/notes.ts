@@ -16,6 +16,9 @@ export type Note = {
   title?: string;
   author?: string;
   caption?: string;
+  /** user-written memo, separate from IG caption */
+  note?: string;
+  starred?: boolean;
   sourceUrl?: string;
   media: NoteMedia[];
   thumbnailFilename?: string;
@@ -62,6 +65,8 @@ export type MediaInput = {
 export type CreateNoteInput = {
   /** title chosen by user in rename modal (no extension required) */
   title: string;
+  /** optional user-written memo */
+  note?: string;
   items: MediaInput[];
   metadata?: IgMetadata | null;
   onItemProgress?: (index: number, total: number, fraction: number) => void;
@@ -133,6 +138,7 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     id,
     createdAt,
     title: input.title.trim() || undefined,
+    note: input.note?.trim() || undefined,
     author: input.metadata?.author,
     caption: input.metadata?.caption,
     sourceUrl: input.metadata?.sourceUrl,
@@ -184,6 +190,54 @@ export async function listNotes(): Promise<Note[]> {
 
   notes.sort((a, b) => b.createdAt - a.createdAt);
   return notes;
+}
+
+export type NotePatch = Partial<
+  Pick<Note, 'title' | 'note' | 'starred' | 'caption'>
+>;
+
+export async function updateNote(
+  noteId: string,
+  patch: NotePatch,
+): Promise<Note | null> {
+  const dir = new Directory(rootDir(), noteId);
+  if (!dir.exists) return null;
+  const metaFile = new File(dir, 'meta.json');
+  if (!metaFile.exists) return null;
+
+  let current: Note;
+  try {
+    current = JSON.parse(await metaFile.text()) as Note;
+  } catch {
+    return null;
+  }
+
+  const merged: Note = {
+    ...current,
+    ...patch,
+    title: patch.title?.trim() || current.title,
+    note: patch.note === undefined ? current.note : patch.note.trim() || undefined,
+  };
+
+  metaFile.write(JSON.stringify(merged, null, 2), { encoding: 'utf8' });
+
+  try {
+    const html = renderNoteHtml({
+      title: merged.title,
+      author: merged.author,
+      caption: merged.caption,
+      media: merged.media,
+      thumbnailFilename: merged.thumbnailFilename,
+      sourceUrl: merged.sourceUrl,
+      createdAt: merged.createdAt,
+    });
+    const indexFile = new File(dir, 'index.html');
+    indexFile.write(html, { encoding: 'utf8' });
+  } catch {
+    // 渲染失败不影响 meta 更新
+  }
+
+  return merged;
 }
 
 export function deleteNote(note: Note): void {
