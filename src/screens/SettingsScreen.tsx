@@ -1,3 +1,6 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import {
   Alert,
@@ -18,8 +21,12 @@ import {
   pingCobaltInstance,
   setCobaltInstance,
 } from '../lib/cobalt';
+import type { SettingsStackParamList } from '../navigation/SettingsStack';
+
+type Nav = NativeStackNavigationProp<SettingsStackParamList, 'SettingsList'>;
 
 export default function SettingsScreen() {
+  const navigation = useNavigation<Nav>();
   const [input, setInput] = useState('');
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -85,82 +92,20 @@ export default function SettingsScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           <Text style={styles.title}>设置</Text>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Cobalt 解析实例</Text>
-            <Text style={styles.cardHint}>
-              OffNote 通过 Cobalt 解析 Instagram 链接。
-              到 instances.cobalt.best 找一个 instagram=true 且无 turnstile 的在线实例。
-            </Text>
-
-            <View style={styles.statusRow}>
-              <Text style={styles.statusLabel}>当前实例</Text>
-              {saved ? (
-                <Text style={styles.statusOk} numberOfLines={1}>
-                  {saved}
-                </Text>
-              ) : (
-                <Text style={styles.statusEmpty}>未配置</Text>
-              )}
+          <Pressable
+            onPress={() => navigation.navigate('StorageStats')}
+            style={({ pressed }) => [styles.navRow, pressed && styles.navRowPressed]}
+            android_ripple={{ color: '#eee' }}
+          >
+            <View style={styles.navIcon}>
+              <Ionicons name="stats-chart-outline" size={20} color="#444" />
             </View>
-
-            <TextInput
-              value={input}
-              onChangeText={setInput}
-              placeholder="https://your-cobalt-instance.example.com/"
-              placeholderTextColor="#aaa"
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!busy}
-              style={styles.input}
-            />
-
-            <View style={styles.actions}>
-              {saved && (
-                <>
-                  <Pressable
-                    onPress={handleClear}
-                    disabled={busy}
-                    style={[styles.btn, styles.btnGhost, busy && styles.btnDisabled]}
-                  >
-                    <Text style={styles.btnGhostText}>清除</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={handlePing}
-                    disabled={busy}
-                    style={[styles.btn, styles.btnGhost, busy && styles.btnDisabled]}
-                  >
-                    <Text style={styles.btnGhostText}>
-                      {busy ? '检测中…' : '测试连通'}
-                    </Text>
-                  </Pressable>
-                </>
-              )}
-              <Pressable
-                onPress={handleSave}
-                disabled={busy}
-                style={[styles.btn, styles.btnPrimary, busy && styles.btnDisabled]}
-              >
-                <Text style={styles.btnPrimaryText}>
-                  {busy ? '保存中…' : '保存'}
-                </Text>
-              </Pressable>
+            <View style={styles.navBody}>
+              <Text style={styles.navLabel}>使用统计</Text>
+              <Text style={styles.navHint}>查看笔记数量和本地空间占用</Text>
             </View>
-          </View>
-
-          <View style={styles.helpCard}>
-            <Text style={styles.helpTitle}>哪里找 Cobalt 实例？</Text>
-            <Text style={styles.helpText} selectable>
-              1. 浏览器打开 https://instances.cobalt.best{'\n'}
-              2. 勾选 "only online" 和 "only instances w/out turnstile"{'\n'}
-              3. 找一个 services 列里 Instagram 是 ✓ 的{'\n'}
-              4. 复制它的 API URL（一般是 https://开头）{'\n'}
-              5. 粘进上方输入框 → 保存 → 测试连通
-            </Text>
-            <Text style={styles.helpWarn} selectable>
-              ⚠️ 公共实例可能挂、可能限流。挂了就换一个，或自部署
-              （Railway/Docker 一键，约 $5/月）。
-            </Text>
-          </View>
+            <Ionicons name="chevron-forward" size={18} color="#bbb" />
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -180,6 +125,40 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '600',
     marginBottom: 20,
+  },
+  navRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#eee',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  navRowPressed: {
+    backgroundColor: '#f5f5f5',
+  },
+  navIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#f6f8fb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navBody: { flex: 1 },
+  navLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111',
+    marginBottom: 2,
+  },
+  navHint: {
+    fontSize: 12,
+    color: '#888',
   },
   card: {
     backgroundColor: '#f6f8fb',
