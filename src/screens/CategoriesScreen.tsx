@@ -54,14 +54,26 @@ export default function CategoriesScreen() {
 
   const handleConfirmEdit = async (name: string) => {
     if (!edit) return;
-    if (edit.mode === 'create') {
-      await createCategory(name);
-    } else {
-      await renameCategory(edit.category.id, name);
+    const result =
+      edit.mode === 'create'
+        ? await createCategory(name)
+        : await renameCategory(edit.category.id, name);
+    if (!result.ok) {
+      if (result.reason === 'duplicate') {
+        Alert.alert('提示', '已有同名分类，请换一个');
+      }
+      return;
     }
     setEdit(null);
     await reload();
   };
+
+  const takenNames =
+    edit?.mode === 'rename'
+      ? categories
+          .filter((c) => c.id !== edit.category.id)
+          .map((c) => c.name)
+      : categories.map((c) => c.name);
 
   const handleDelete = async (cat: Category, closeSwipe: () => void) => {
     const inCat = countByCategory(cat.id);
@@ -106,10 +118,11 @@ export default function CategoriesScreen() {
         <Text style={styles.title}>分类</Text>
         <Pressable
           onPress={() => setEdit({ mode: 'create' })}
-          style={styles.headerCta}
+          style={({ pressed }) => [styles.headerCta, pressed && styles.headerCtaPressed]}
+          hitSlop={8}
+          accessibilityLabel="新建分类"
         >
-          <Ionicons name="add" size={18} color="#fff" />
-          <Text style={styles.headerCtaText}>新建</Text>
+          <Ionicons name="add" size={26} color="#111" />
         </Pressable>
       </View>
 
@@ -152,6 +165,7 @@ export default function CategoriesScreen() {
         visible={!!edit}
         mode={edit?.mode === 'rename' ? 'rename' : 'create'}
         defaultName={edit?.mode === 'rename' ? edit.category.name : ''}
+        takenNames={takenNames}
         onCancel={() => setEdit(null)}
         onConfirm={handleConfirmEdit}
       />
@@ -235,18 +249,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   headerCta: {
-    flexDirection: 'row',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#111',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
+    justifyContent: 'center',
   },
-  headerCtaText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
+  headerCtaPressed: {
+    backgroundColor: '#f0f0f0',
   },
   uncategorized: {
     marginHorizontal: 20,

@@ -1,4 +1,3 @@
-import { useActionSheet } from '@expo/react-native-action-sheet';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
@@ -19,7 +18,9 @@ import {
 import type { AppStateStatus } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import MoveToCategorySheet from '../components/MoveToCategorySheet';
 import NoteCard from '../components/NoteCard';
+import Wordmark from '../components/Wordmark';
 import { listCategories, type Category } from '../lib/categories';
 import {
   deleteNote,
@@ -38,10 +39,10 @@ type FilterKey =
   | { kind: 'category'; id: string };
 
 export default function HomeScreen() {
-  const { showActionSheetWithOptions } = useActionSheet();
   const [webVisible, setWebVisible] = useState(false);
   const [webSourceUrl, setWebSourceUrl] = useState<string | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
+  const [moveTarget, setMoveTarget] = useState<Note | null>(null);
   const lastHandledRef = useRef<string | null>(null);
 
   const [notes, setNotes] = useState<Note[]>([]);
@@ -157,39 +158,20 @@ export default function HomeScreen() {
     ]);
   };
 
-  const handleMoveToCategory = useCallback(
-    (note: Note) => {
-      const targets: { id?: string; label: string }[] = [
-        { id: undefined, label: '未分类' },
-        ...categories.map((c) => ({ id: c.id, label: c.name })),
-      ];
-      const currentIndex = targets.findIndex((t) => t.id === note.categoryId);
-      const labels = targets.map((t, i) => {
-        const mark = i === currentIndex ? ' ✓' : '';
-        return `${t.label}${mark}`;
-      });
-      const cancelIndex = labels.length;
-      const options = [...labels, '取消'];
+  const handleMoveToCategory = useCallback((note: Note) => {
+    setMoveTarget(note);
+  }, []);
 
-      showActionSheetWithOptions(
-        {
-          title: '移动到分类',
-          message: note.title ?? note.author ?? undefined,
-          options,
-          cancelButtonIndex: cancelIndex,
-          userInterfaceStyle: 'light',
-        },
-        async (selected) => {
-          if (selected === undefined || selected === cancelIndex) return;
-          const target = targets[selected];
-          if (!target) return;
-          if (target.id === note.categoryId) return;
-          await updateNote(note.id, { categoryId: target.id });
-          await reloadAll();
-        },
-      );
+  const handlePickCategory = useCallback(
+    async (categoryId: string | undefined) => {
+      const note = moveTarget;
+      setMoveTarget(null);
+      if (!note) return;
+      if (note.categoryId === categoryId) return;
+      await updateNote(note.id, { categoryId });
+      await reloadAll();
     },
-    [categories, reloadAll, showActionSheetWithOptions],
+    [moveTarget, reloadAll],
   );
 
   const renderItem = ({ item }: { item: Note }) => (
@@ -236,14 +218,14 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>OffNote</Text>
-          <Text style={styles.subtitle}>
-            {notes.length > 0 ? `${notes.length} 条离线笔记` : '保存随时可离线读'}
-          </Text>
-        </View>
-        <Pressable onPress={openWebManually} style={styles.headerCta}>
-          <Text style={styles.headerCtaText}>+ 新增</Text>
+        <Wordmark size={32} />
+        <Pressable
+          onPress={openWebManually}
+          style={({ pressed }) => [styles.headerCta, pressed && styles.headerCtaPressed]}
+          hitSlop={8}
+          accessibilityLabel="新增笔记"
+        >
+          <Ionicons name="add" size={26} color="#111" />
         </Pressable>
       </View>
 
@@ -343,7 +325,7 @@ export default function HomeScreen() {
                 <>
                   <Text style={styles.emptyTitle}>还没有离线笔记</Text>
                   <Text style={styles.emptyHint}>
-                    复制 Instagram 链接 → 点右上「+ 新增」开始保存
+                    复制 Instagram 链接 → 点右上「+」开始保存
                   </Text>
                 </>
               ) : (
@@ -372,6 +354,13 @@ export default function HomeScreen() {
         note={activeNote}
         onClose={() => setActiveNote(null)}
       />
+
+      <MoveToCategorySheet
+        note={moveTarget}
+        categories={categories}
+        onPick={handlePickCategory}
+        onDismiss={() => setMoveTarget(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -383,30 +372,21 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 8,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  subtitle: {
-    fontSize: 13,
-    color: '#888',
+    paddingBottom: 10,
   },
   headerCta: {
-    backgroundColor: '#111',
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderRadius: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerCtaText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
+  headerCtaPressed: {
+    backgroundColor: '#f0f0f0',
   },
   searchBox: {
     marginHorizontal: 20,

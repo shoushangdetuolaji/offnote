@@ -28,32 +28,52 @@ async function saveAll(cats: Category[]): Promise<void> {
   await AsyncStorage.setItem(KEY, JSON.stringify(cats));
 }
 
-export async function createCategory(name: string): Promise<Category | null> {
-  const trimmed = name.trim();
-  if (!trimmed) return null;
+export type CategoryMutationResult =
+  | { ok: true; category: Category }
+  | { ok: false; reason: 'empty' | 'duplicate' };
+
+function normalize(name: string): string {
+  return name.trim().toLocaleLowerCase();
+}
+
+export async function isDuplicateName(
+  name: string,
+  excludeId?: string,
+): Promise<boolean> {
+  const key = normalize(name);
+  if (!key) return false;
   const cats = await listCategories();
-  if (cats.some((c) => c.name === trimmed)) {
-    return cats.find((c) => c.name === trimmed) ?? null;
-  }
-  const next: Category = {
-    id: uid(),
-    name: trimmed.slice(0, 40),
-    createdAt: Date.now(),
-  };
+  return cats.some((c) => c.id !== excludeId && normalize(c.name) === key);
+}
+
+export async function createCategory(
+  name: string,
+): Promise<CategoryMutationResult> {
+  const trimmed = name.trim().slice(0, 40);
+  if (!trimmed) return { ok: false, reason: 'empty' };
+  if (await isDuplicateName(trimmed)) return { ok: false, reason: 'duplicate' };
+  const next: Category = { id: uid(), name: trimmed, createdAt: Date.now() };
+  const cats = await listCategories();
   await saveAll([...cats, next]);
-  return next;
+  return { ok: true, category: next };
 }
 
 export async function renameCategory(
   id: string,
   newName: string,
-): Promise<Category | null> {
+): Promise<CategoryMutationResult> {
   const trimmed = newName.trim().slice(0, 40);
-  if (!trimmed) return null;
+  if (!trimmed) return { ok: false, reason: 'empty' };
+  if (await isDuplicateName(trimmed, id)) {
+    return { ok: false, reason: 'duplicate' };
+  }
   const cats = await listCategories();
   const next = cats.map((c) => (c.id === id ? { ...c, name: trimmed } : c));
   await saveAll(next);
-  return next.find((c) => c.id === id) ?? null;
+  const updated = next.find((c) => c.id === id);
+  return updated
+    ? { ok: true, category: updated }
+    : { ok: false, reason: 'empty' };
 }
 
 export async function deleteCategory(id: string): Promise<void> {

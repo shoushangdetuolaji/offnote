@@ -1,4 +1,3 @@
-import { useActionSheet } from '@expo/react-native-action-sheet';
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -14,6 +13,7 @@ import {
 
 import type { Category } from '../lib/categories';
 import { deleteNote, updateNote, type Note } from '../lib/notes';
+import MoveToCategorySheet from './MoveToCategorySheet';
 import NoteCard from './NoteCard';
 
 type Props = {
@@ -46,8 +46,8 @@ export default function NotesList({
   emptyTitle = '还没有笔记',
   emptyHint,
 }: Props) {
-  const { showActionSheetWithOptions } = useActionSheet();
   const [query, setQuery] = useState('');
+  const [moveTarget, setMoveTarget] = useState<Note | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -77,39 +77,20 @@ export default function NotesList({
     ]);
   };
 
-  const handleMoveToCategory = useCallback(
-    (note: Note) => {
-      const targets: { id?: string; label: string }[] = [
-        { id: undefined, label: '未分类' },
-        ...categories.map((c) => ({ id: c.id, label: c.name })),
-      ];
-      const currentIndex = targets.findIndex((t) => t.id === note.categoryId);
-      const labels = targets.map((t, i) => {
-        const mark = i === currentIndex ? ' ✓' : '';
-        return `${t.label}${mark}`;
-      });
-      const cancelIndex = labels.length;
-      const options = [...labels, '取消'];
+  const handleMoveToCategory = useCallback((note: Note) => {
+    setMoveTarget(note);
+  }, []);
 
-      showActionSheetWithOptions(
-        {
-          title: '移动到分类',
-          message: note.title ?? note.author ?? undefined,
-          options,
-          cancelButtonIndex: cancelIndex,
-          userInterfaceStyle: 'light',
-        },
-        async (selected) => {
-          if (selected === undefined || selected === cancelIndex) return;
-          const target = targets[selected];
-          if (!target) return;
-          if (target.id === note.categoryId) return;
-          await updateNote(note.id, { categoryId: target.id });
-          await onChanged?.();
-        },
-      );
+  const handlePickCategory = useCallback(
+    async (categoryId: string | undefined) => {
+      const note = moveTarget;
+      setMoveTarget(null);
+      if (!note) return;
+      if (note.categoryId === categoryId) return;
+      await updateNote(note.id, { categoryId });
+      await onChanged?.();
     },
-    [categories, onChanged, showActionSheetWithOptions],
+    [moveTarget, onChanged],
   );
 
   const renderItem = ({ item }: { item: Note }) => (
@@ -180,6 +161,13 @@ export default function NotesList({
             </View>
           ) : null
         }
+      />
+
+      <MoveToCategorySheet
+        note={moveTarget}
+        categories={categories}
+        onPick={handlePickCategory}
+        onDismiss={() => setMoveTarget(null)}
       />
     </View>
   );

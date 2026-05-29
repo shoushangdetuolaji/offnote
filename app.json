@@ -29,7 +29,8 @@
           "savePhotosPermission": "OffNote 需要保存下载的视频和图片到你的相册",
           "isAccessMediaLocationEnabled": false
         }
-      ]
+      ],
+      "expo-font"
     ]
   }
 }

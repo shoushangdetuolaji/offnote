@@ -14,6 +14,8 @@ type Props = {
   visible: boolean;
   mode: 'create' | 'rename';
   defaultName?: string;
+  /** Already-taken names (case-insensitive), excluding self for rename */
+  takenNames?: string[];
   onCancel: () => void;
   onConfirm: (name: string) => void;
 };
@@ -22,6 +24,7 @@ export default function CategoryEditModal({
   visible,
   mode,
   defaultName,
+  takenNames,
   onCancel,
   onConfirm,
 }: Props) {
@@ -31,9 +34,17 @@ export default function CategoryEditModal({
     if (visible) setName(defaultName ?? '');
   }, [visible, defaultName]);
 
+  const trimmed = name.trim();
+  const lowered = trimmed.toLocaleLowerCase();
+  const duplicate =
+    !!trimmed &&
+    !!takenNames &&
+    takenNames.some((n) => n.toLocaleLowerCase() === lowered);
+  const tooLong = trimmed.length > 40;
+  const canConfirm = !!trimmed && !duplicate && !tooLong;
+
   const handleConfirm = () => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!canConfirm) return;
     onConfirm(trimmed);
   };
 
@@ -62,8 +73,12 @@ export default function CategoryEditModal({
             autoCorrect={false}
             autoFocus
             maxLength={40}
-            style={styles.input}
+            style={[styles.input, duplicate && styles.inputError]}
           />
+
+          {duplicate && (
+            <Text style={styles.errorText}>已有同名分类</Text>
+          )}
 
           <View style={styles.actions}>
             <Pressable
@@ -74,11 +89,11 @@ export default function CategoryEditModal({
             </Pressable>
             <Pressable
               onPress={handleConfirm}
-              disabled={!name.trim()}
+              disabled={!canConfirm}
               style={[
                 styles.btn,
                 styles.btnPrimary,
-                !name.trim() && styles.btnDisabled,
+                !canConfirm && styles.btnDisabled,
               ]}
             >
               <Text style={styles.btnPrimaryText}>
@@ -117,6 +132,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 15,
     color: '#111',
+  },
+  inputError: {
+    borderColor: '#e23b3b',
+  },
+  errorText: {
+    marginTop: 6,
+    color: '#e23b3b',
+    fontSize: 12,
   },
   actions: {
     marginTop: 16,
