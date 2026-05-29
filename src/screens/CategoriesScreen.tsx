@@ -1,7 +1,8 @@
+import { useActionSheet } from '@expo/react-native-action-sheet';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -10,9 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
-import type { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import CategoryEditModal from '../components/CategoryEditModal';
 import {
@@ -33,6 +32,8 @@ type Nav = NativeStackNavigationProp<CategoriesStackParamList, 'CategoriesList'>
 
 export default function CategoriesScreen() {
   const navigation = useNavigation<Nav>();
+  const { showActionSheetWithOptions } = useActionSheet();
+  const insets = useSafeAreaInsets();
   const [categories, setCategories] = useState<Category[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [edit, setEdit] = useState<EditTarget | null>(null);
@@ -102,13 +103,28 @@ export default function CategoriesScreen() {
     });
   };
 
+  const openActionMenu = (cat: Category) => {
+    showActionSheetWithOptions(
+      {
+        title: cat.name,
+        options: ['改名', '删除', '取消'],
+        destructiveButtonIndex: 1,
+        cancelButtonIndex: 2,
+        containerStyle: { paddingBottom: insets.bottom },
+      },
+      (index) => {
+        if (index === 0) setEdit({ mode: 'rename', category: cat });
+        else if (index === 1) handleDelete(cat, () => {});
+      },
+    );
+  };
+
   const renderItem = ({ item }: { item: Category }) => (
     <CategoryRow
       category={item}
       count={countByCategory(item.id)}
       onPress={() => openCategory(item)}
-      onRename={() => setEdit({ mode: 'rename', category: item })}
-      onDelete={handleDelete}
+      onLongPress={() => openActionMenu(item)}
     />
   );
 
@@ -126,38 +142,41 @@ export default function CategoriesScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.uncategorized}>
-        <Pressable
-          onPress={() =>
-            navigation.navigate('CategoryNotes', {
-              categoryId: '__uncategorized__',
-              categoryName: '未分类',
-            })
-          }
-          style={styles.row}
-        >
-          <Ionicons name="albums-outline" size={20} color="#666" />
-          <Text style={styles.uncategorizedName}>未分类</Text>
-          <Text style={styles.count}>{countByCategory(undefined)}</Text>
-          <Ionicons name="chevron-forward" size={18} color="#bbb" />
-        </Pressable>
-      </View>
-
       <FlatList
         data={categories}
         keyExtractor={(c) => c.id}
         renderItem={renderItem}
-        contentContainerStyle={[
-          styles.list,
-          categories.length === 0 && styles.listEmpty,
-        ]}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>还没有自定义分类</Text>
-            <Text style={styles.emptyHint}>
-              点右上「新建」给笔记建一个分类
-            </Text>
-          </View>
+        contentContainerStyle={styles.list}
+        ItemSeparatorComponent={() => <View style={styles.divider} />}
+        ListHeaderComponent={
+          <>
+            <Pressable
+              onPress={() =>
+                navigation.navigate('CategoryNotes', {
+                  categoryId: '__uncategorized__',
+                  categoryName: '未分类',
+                })
+              }
+              android_ripple={{ color: '#eee' }}
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+            >
+              <Ionicons name="albums-outline" size={20} color="#666" />
+              <Text style={styles.rowName} numberOfLines={1}>
+                未分类
+              </Text>
+              <Text style={styles.count}>{countByCategory(undefined)}</Text>
+              <Ionicons name="chevron-forward" size={18} color="#bbb" />
+            </Pressable>
+            {categories.length > 0 && <View style={styles.divider} />}
+          </>
+        }
+        ListFooterComponent={
+          categories.length === 0 ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyTitle}>还没有自定义分类</Text>
+              <Text style={styles.emptyHint}>点右上「+」给笔记建一个分类</Text>
+            </View>
+          ) : null
         }
       />
 
@@ -177,57 +196,25 @@ type RowProps = {
   category: Category;
   count: number;
   onPress: () => void;
-  onRename: () => void;
-  onDelete: (cat: Category, closeSwipe: () => void) => void;
+  onLongPress: () => void;
 };
 
-function CategoryRow({ category, count, onPress, onRename, onDelete }: RowProps) {
-  const swipeRef = useRef<SwipeableMethods>(null);
-  const close = () => swipeRef.current?.close();
-
-  const renderActions = () => (
-    <View style={styles.actionsBox}>
-      <Pressable
-        onPress={() => {
-          close();
-          onRename();
-        }}
-        style={[styles.actionBtn, styles.actionRename]}
-      >
-        <Ionicons name="create-outline" size={18} color="#fff" />
-        <Text style={styles.actionText}>改名</Text>
-      </Pressable>
-      <Pressable
-        onPress={() => onDelete(category, close)}
-        style={[styles.actionBtn, styles.actionDelete]}
-      >
-        <Ionicons name="trash-outline" size={18} color="#fff" />
-        <Text style={styles.actionText}>删除</Text>
-      </Pressable>
-    </View>
-  );
-
+function CategoryRow({ category, count, onPress, onLongPress }: RowProps) {
   return (
-    <Swipeable
-      ref={swipeRef}
-      friction={1.6}
-      rightThreshold={36}
-      overshootRight={false}
-      renderRightActions={renderActions}
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={250}
+      android_ripple={{ color: '#eee' }}
+      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
     >
-      <Pressable
-        onPress={onPress}
-        onLongPress={onRename}
-        style={styles.row}
-      >
-        <Ionicons name="folder" size={20} color="#f5b400" />
-        <Text style={styles.rowName} numberOfLines={1}>
-          {category.name}
-        </Text>
-        <Text style={styles.count}>{count}</Text>
-        <Ionicons name="chevron-forward" size={18} color="#bbb" />
-      </Pressable>
-    </Swipeable>
+      <Ionicons name="folder" size={20} color="#f5b400" />
+      <Text style={styles.rowName} numberOfLines={1}>
+        {category.name}
+      </Text>
+      <Text style={styles.count}>{count}</Text>
+      <Ionicons name="chevron-forward" size={18} color="#bbb" />
+    </Pressable>
   );
 }
 
@@ -258,13 +245,12 @@ const styles = StyleSheet.create({
   headerCtaPressed: {
     backgroundColor: '#f0f0f0',
   },
-  uncategorized: {
+  list: {
     marginHorizontal: 20,
-    marginBottom: 8,
-    backgroundColor: '#f6f8fb',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e6ecf2',
+    marginTop: 4,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#f7f7f8',
   },
   row: {
     flexDirection: 'row',
@@ -272,13 +258,10 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 14,
     paddingHorizontal: 14,
-    backgroundColor: '#fff',
+    backgroundColor: '#f7f7f8',
   },
-  uncategorizedName: {
-    flex: 1,
-    fontSize: 15,
-    color: '#444',
-    fontWeight: '500',
+  rowPressed: {
+    backgroundColor: '#ededee',
   },
   rowName: {
     flex: 1,
@@ -291,14 +274,10 @@ const styles = StyleSheet.create({
     color: '#999',
     fontVariant: ['tabular-nums'],
   },
-  list: {
-    paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 24,
-  },
-  listEmpty: {
-    flexGrow: 1,
-    justifyContent: 'center',
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#e2e2e4',
+    marginLeft: 46,
   },
   empty: {
     alignItems: 'center',
@@ -313,21 +292,5 @@ const styles = StyleSheet.create({
   emptyHint: {
     fontSize: 13,
     color: '#888',
-  },
-  actionsBox: {
-    flexDirection: 'row',
-  },
-  actionBtn: {
-    width: 72,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  actionRename: { backgroundColor: '#1f6feb' },
-  actionDelete: { backgroundColor: '#e23b3b' },
-  actionText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
   },
 });
