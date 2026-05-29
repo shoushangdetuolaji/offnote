@@ -258,6 +258,7 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
       title: titleOnly,
       note,
       categoryId,
+      source: 'instagram',
       items,
       metadata,
       onItemProgress: (i, total, f) => {

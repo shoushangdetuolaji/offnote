@@ -28,6 +28,16 @@ export default function NoteCard({
   const hasVideo = note.media?.some((m) => m.kind === 'video');
   const placeholderEmoji = total === 0 ? '📝' : hasVideo ? '🎬' : '🖼️';
 
+  const sourceBadge = (() => {
+    if (note.source === 'rednote') {
+      return { label: 'RED', bg: '#fe2c55', color: '#fff' };
+    }
+    if (note.source === 'instagram') {
+      return { label: 'IG', bg: '#e1306c', color: '#fff' };
+    }
+    return null;
+  })();
+
   const renderRightActions = () => (
     <View style={styles.actionsContainer}>
       <Pressable
@@ -75,6 +85,13 @@ export default function NoteCard({
             {total > 1 && (
               <View style={styles.countBadge}>
                 <Text style={styles.countBadgeText}>{total} 项</Text>
+              </View>
+            )}
+            {sourceBadge && (
+              <View style={[styles.sourceBadge, { backgroundColor: sourceBadge.bg }]}>
+                <Text style={[styles.sourceBadgeText, { color: sourceBadge.color }]}>
+                  {sourceBadge.label}
+                </Text>
               </View>
             )}
           </View>
@@ -166,6 +183,19 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   countBadgeText: { color: '#fff', fontSize: 10, fontWeight: '600' },
+  sourceBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  sourceBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
   cardBody: { flex: 1, paddingVertical: 2 },
   headerRow: {
     flexDirection: 'row',

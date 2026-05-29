@@ -3,6 +3,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   AppState,
   FlatList,
@@ -20,6 +21,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import MoveToCategorySheet from '../components/MoveToCategorySheet';
 import NoteCard from '../components/NoteCard';
+import PasteUrlModal from '../components/PasteUrlModal';
+import SourcePickerSheet from '../components/SourcePickerSheet';
 import Wordmark from '../components/Wordmark';
 import { listCategories, type Category } from '../lib/categories';
 import {
@@ -28,9 +31,13 @@ import {
   updateNote,
   type Note,
 } from '../lib/notes';
-import { extractInstagramUrl } from '../lib/url';
+import { extractSupportedUrl, isRednoteUrl } from '../lib/url';
+import { saveXhsFromUrl } from '../lib/xhs';
 import CobaltWebScreen from './CobaltWebScreen';
 import NoteViewerScreen from './NoteViewerScreen';
+import XhsWebScreen from './XhsWebScreen';
+
+import type { NoteSource } from '../lib/notes';
 
 type FilterKey =
   | { kind: 'all' }
@@ -41,8 +48,14 @@ type FilterKey =
 export default function HomeScreen() {
   const [webVisible, setWebVisible] = useState(false);
   const [webSourceUrl, setWebSourceUrl] = useState<string | null>(null);
+  const [xhsVisible, setXhsVisible] = useState(false);
+  const [xhsSourceUrl, setXhsSourceUrl] = useState<string | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
+  const [pendingSource, setPendingSource] = useState<NoteSource | null>(null);
   const [moveTarget, setMoveTarget] = useState<Note | null>(null);
+  const [sourcePickerVisible, setSourcePickerVisible] = useState(false);
+  const [xhsPasteVisible, setXhsPasteVisible] = useState(false);
+  const [busyMsg, setBusyMsg] = useState<string | null>(null);
   const lastHandledRef = useRef<string | null>(null);
 
   const [notes, setNotes] = useState<Note[]>([]);
@@ -95,41 +108,112 @@ export default function HomeScreen() {
     })();
   }, [reloadAll]);
 
-  const checkClipboardForInstagram = useCallback(async () => {
+  const tryImportXhs = useCallback(
+    async (url: string) => {
+      setBusyMsg('正在解析小红书链接…');
+      const result = await saveXhsFromUrl(url, {
+        onProgress: (msg) => setBusyMsg(msg),
+      });
+      setBusyMsg(null);
+      if (result.ok) {
+        Alert.alert(
+          '已保存',
+          `保存了 ${result.mediaCount} 个文件`,
+        );
+        await reloadAll();
+        return;
+      }
+      // fallback to WebView (lets the page render JS to get past anti-bot)
+      Alert.alert(
+        '直接解析失败',
+        '换用浏览器加载，加载完成后点右上「保存」',
+        [
+          {
+            text: '好',
+            onPress: () => {
+              setXhsSourceUrl(url);
+              setXhsVisible(true);
+            },
+          },
+        ],
+      );
+    },
+    [reloadAll],
+  );
+
+  const openForUrl = (url: string | null, source: NoteSource | null) => {
+    if (source === 'rednote') {
+      if (url) {
+        tryImportXhs(url);
+      } else {
+        // no clipboard hit; ask user to paste one
+        setXhsPasteVisible(true);
+      }
+    } else {
+      // instagram → cobalt webview as before
+      setWebSourceUrl(url);
+      setWebVisible(true);
+    }
+  };
+
+  const checkClipboard = useCallback(async () => {
     if (Platform.OS === 'ios') {
       const hasUrl = await Clipboard.hasUrlAsync();
       if (!hasUrl) return;
     }
     const text = await Clipboard.getStringAsync();
-    const url = extractInstagramUrl(text);
-    if (!url) return;
-    if (lastHandledRef.current === url) return;
-    lastHandledRef.current = url;
-    setPendingUrl(url);
+    const hit = extractSupportedUrl(text);
+    if (!hit) return;
+    if (lastHandledRef.current === hit.url) return;
+    lastHandledRef.current = hit.url;
+    setPendingUrl(hit.url);
+    setPendingSource(hit.source);
   }, []);
 
   useEffect(() => {
-    checkClipboardForInstagram();
+    checkClipboard();
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
       if (next === 'active') {
-        checkClipboardForInstagram();
+        checkClipboard();
         reloadAll();
       }
     });
     return () => sub.remove();
-  }, [checkClipboardForInstagram, reloadAll]);
+  }, [checkClipboard, reloadAll]);
+
+  const consumeUrl = (url: string) => {
+    lastHandledRef.current = url;
+  };
 
   const openWebWithPending = () => {
     if (!pendingUrl) return;
-    setWebSourceUrl(pendingUrl);
+    const url = pendingUrl;
+    const source = pendingSource;
+    consumeUrl(url);
     setPendingUrl(null);
-    setWebVisible(true);
+    setPendingSource(null);
+    openForUrl(url, source);
   };
 
   const openWebManually = async () => {
     const text = await Clipboard.getStringAsync().catch(() => '');
-    setWebSourceUrl(extractInstagramUrl(text) ?? null);
-    setWebVisible(true);
+    const hit = extractSupportedUrl(text);
+    // Skip auto-import if we've already handled this exact URL,
+    // or if the user just dismissed it via the banner.
+    if (hit && lastHandledRef.current !== hit.url) {
+      consumeUrl(hit.url);
+      // also clear pending banner so it doesn't reappear stale
+      setPendingUrl(null);
+      setPendingSource(null);
+      openForUrl(hit.url, hit.source);
+      return;
+    }
+    setSourcePickerVisible(true);
+  };
+
+  const handlePickSource = (source: NoteSource) => {
+    setSourcePickerVisible(false);
+    openForUrl(null, source);
   };
 
   const handleRefresh = async () => {
@@ -186,13 +270,6 @@ export default function HomeScreen() {
   type TabSpec = { key: string; label: string; count: number; filter: FilterKey; icon?: 'star' };
   const tabs: TabSpec[] = [
     { key: 'all', label: '全部', count: notes.length, filter: { kind: 'all' } },
-    {
-      key: 'starred',
-      label: '星标',
-      count: notes.filter((n) => n.starred).length,
-      filter: { kind: 'starred' },
-      icon: 'star',
-    },
     {
       key: 'uncategorized',
       label: '未分类',
@@ -282,15 +359,18 @@ export default function HomeScreen() {
 
       {pendingUrl && (
         <View style={styles.banner}>
-          <Text style={styles.bannerTitle}>剪贴板里有 Instagram 链接</Text>
+          <Text style={styles.bannerTitle}>
+            剪贴板里有{pendingSource === 'rednote' ? ' 小红书 ' : ' Instagram '}链接
+          </Text>
           <Text style={styles.bannerUrl} numberOfLines={1}>
             {pendingUrl}
           </Text>
           <View style={styles.bannerActions}>
             <Pressable
               onPress={() => {
-                lastHandledRef.current = null;
+                if (pendingUrl) consumeUrl(pendingUrl);
                 setPendingUrl(null);
+                setPendingSource(null);
               }}
               style={[styles.smallBtn, styles.smallBtnGhost]}
             >
@@ -350,6 +430,15 @@ export default function HomeScreen() {
         }}
       />
 
+      <XhsWebScreen
+        visible={xhsVisible}
+        sourceUrl={xhsSourceUrl}
+        onClose={async () => {
+          setXhsVisible(false);
+          await reloadAll();
+        }}
+      />
+
       <NoteViewerScreen
         note={activeNote}
         onClose={() => setActiveNote(null)}
@@ -361,6 +450,36 @@ export default function HomeScreen() {
         onPick={handlePickCategory}
         onDismiss={() => setMoveTarget(null)}
       />
+
+      <SourcePickerSheet
+        visible={sourcePickerVisible}
+        onPick={handlePickSource}
+        onDismiss={() => setSourcePickerVisible(false)}
+      />
+
+      <PasteUrlModal
+        visible={xhsPasteVisible}
+        title="粘贴小红书链接"
+        placeholder="支持小红书 App 分享文本或 xhslink/xiaohongshu 链接"
+        validate={(t) => !!extractSupportedUrl(t)?.url && isRednoteUrl(extractSupportedUrl(t)!.url)}
+        errorText="未识别到小红书链接"
+        onCancel={() => setXhsPasteVisible(false)}
+        onConfirm={(text) => {
+          const hit = extractSupportedUrl(text);
+          if (!hit || hit.source !== 'rednote') return;
+          setXhsPasteVisible(false);
+          tryImportXhs(hit.url);
+        }}
+      />
+
+      {busyMsg && (
+        <View style={styles.busyOverlay} pointerEvents="auto">
+          <View style={styles.busyCard}>
+            <ActivityIndicator color="#fff" />
+            <Text style={styles.busyText}>{busyMsg}</Text>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -494,5 +613,30 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     lineHeight: 20,
+  },
+  busyOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  busyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#111',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 12,
+    minWidth: 220,
+  },
+  busyText: {
+    color: '#fff',
+    fontSize: 14,
+    flex: 1,
   },
 });

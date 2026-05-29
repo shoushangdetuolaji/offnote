@@ -10,17 +10,21 @@ export type NoteMedia = {
   kind: MediaKind;
 };
 
+export type NoteSource = 'instagram' | 'rednote';
+
 export type Note = {
   id: string;
   createdAt: number;
   title?: string;
   author?: string;
   caption?: string;
-  /** user-written memo, separate from IG caption */
+  /** user-written memo, separate from IG/xhs caption */
   note?: string;
   starred?: boolean;
   /** id of the category this note belongs to, undefined = uncategorized */
   categoryId?: string;
+  /** which platform this note was saved from */
+  source?: NoteSource;
   sourceUrl?: string;
   media: NoteMedia[];
   thumbnailFilename?: string;
@@ -71,6 +75,8 @@ export type CreateNoteInput = {
   note?: string;
   /** optional category id to assign */
   categoryId?: string;
+  /** source platform (defaults to instagram for back-compat) */
+  source?: NoteSource;
   items: MediaInput[];
   metadata?: IgMetadata | null;
   onItemProgress?: (index: number, total: number, fraction: number) => void;
@@ -143,6 +149,7 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     title: input.title.trim() || undefined,
     note: input.note?.trim() || undefined,
     categoryId: input.categoryId,
+    source: input.source ?? 'instagram',
     author: input.metadata?.author,
     caption: input.metadata?.caption,
     sourceUrl: input.metadata?.sourceUrl,
