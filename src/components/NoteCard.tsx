@@ -11,6 +11,9 @@ type Props = {
   onPress: (note: Note) => void;
   onDelete: (note: Note, close: () => void) => void;
   onLongPress?: (note: Note) => void;
+  /** When true, the card renders a checkbox and disables swipe / detail-open behaviour. */
+  selectionMode?: boolean;
+  selected?: boolean;
 };
 
 export default function NoteCard({
@@ -18,6 +21,8 @@ export default function NoteCard({
   onPress,
   onDelete,
   onLongPress,
+  selectionMode,
+  selected,
 }: Props) {
   const swipeRef = useRef<SwipeableMethods>(null);
   const closeSwipe = () => swipeRef.current?.close();
@@ -38,6 +43,78 @@ export default function NoteCard({
     return null;
   })();
 
+  const bodyText = note.caption || note.note || note.title || note.id;
+
+  const cardInner = (
+    <Pressable
+      onPress={() => onPress(note)}
+      onLongPress={onLongPress ? () => onLongPress(note) : undefined}
+      style={[styles.card, selectionMode && selected && styles.cardSelected]}
+    >
+      {selectionMode && (
+        <View
+          style={[styles.checkbox, selected && styles.checkboxChecked]}
+        >
+          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+        </View>
+      )}
+
+      <View style={styles.thumbBox}>
+        {thumbUri ? (
+          <Image source={{ uri: thumbUri }} style={styles.thumb} />
+        ) : (
+          <View style={styles.thumbPlaceholder}>
+            <Text style={styles.thumbPlaceholderText}>{placeholderEmoji}</Text>
+          </View>
+        )}
+        {hasVideo && (
+          <View style={styles.videoBadge}>
+            <Text style={styles.videoBadgeText}>视频</Text>
+          </View>
+        )}
+        {total > 1 && (
+          <View style={styles.countBadge}>
+            <Text style={styles.countBadgeText}>{total} 项</Text>
+          </View>
+        )}
+        {sourceBadge && (
+          <View
+            style={[styles.sourceBadge, { backgroundColor: sourceBadge.bg }]}
+          >
+            <Text
+              style={[styles.sourceBadgeText, { color: sourceBadge.color }]}
+            >
+              {sourceBadge.label}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.cardBody}>
+        <View style={styles.headerRow}>
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {note.title || (note.author ? `@${note.author}` : '未命名')}
+          </Text>
+          {note.starred && (
+            <Ionicons
+              name="star"
+              size={14}
+              color="#f5b400"
+              style={styles.starredHint}
+            />
+          )}
+        </View>
+        {note.author && note.title && (
+          <Text style={styles.cardAuthor}>@{note.author}</Text>
+        )}
+        <Text style={styles.cardCaption} numberOfLines={2}>
+          {bodyText}
+        </Text>
+        <Text style={styles.cardMeta}>{formatDate(note.createdAt)}</Text>
+      </View>
+    </Pressable>
+  );
+
   const renderRightActions = () => (
     <View style={styles.actionsContainer}>
       <Pressable
@@ -53,76 +130,23 @@ export default function NoteCard({
     </View>
   );
 
-  const bodyText = note.caption || note.note || note.title || note.id;
-
   return (
-    <View style={styles.wrapper}>
-      <Swipeable
-        ref={swipeRef}
-        friction={1.6}
-        rightThreshold={36}
-        overshootRight={false}
-        renderRightActions={renderRightActions}
-      >
-        <Pressable
-          onPress={() => onPress(note)}
-          onLongPress={onLongPress ? () => onLongPress(note) : undefined}
-          style={styles.card}
+    <View
+      style={[styles.wrapper, selectionMode && selected && styles.wrapperSelected]}
+    >
+      {selectionMode ? (
+        cardInner
+      ) : (
+        <Swipeable
+          ref={swipeRef}
+          friction={1.6}
+          rightThreshold={36}
+          overshootRight={false}
+          renderRightActions={renderRightActions}
         >
-          <View style={styles.thumbBox}>
-            {thumbUri ? (
-              <Image source={{ uri: thumbUri }} style={styles.thumb} />
-            ) : (
-              <View style={styles.thumbPlaceholder}>
-                <Text style={styles.thumbPlaceholderText}>{placeholderEmoji}</Text>
-              </View>
-            )}
-            {hasVideo && (
-              <View style={styles.videoBadge}>
-                <Text style={styles.videoBadgeText}>视频</Text>
-              </View>
-            )}
-            {total > 1 && (
-              <View style={styles.countBadge}>
-                <Text style={styles.countBadgeText}>{total} 项</Text>
-              </View>
-            )}
-            {sourceBadge && (
-              <View style={[styles.sourceBadge, { backgroundColor: sourceBadge.bg }]}>
-                <Text style={[styles.sourceBadgeText, { color: sourceBadge.color }]}>
-                  {sourceBadge.label}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          <View style={styles.cardBody}>
-            <View style={styles.headerRow}>
-              <Text style={styles.cardTitle} numberOfLines={1}>
-                {note.title || (note.author ? `@${note.author}` : '未命名')}
-              </Text>
-              {note.starred && (
-                <Ionicons
-                  name="star"
-                  size={14}
-                  color="#f5b400"
-                  style={styles.starredHint}
-                />
-              )}
-            </View>
-
-            {note.author && note.title && (
-              <Text style={styles.cardAuthor}>@{note.author}</Text>
-            )}
-
-            <Text style={styles.cardCaption} numberOfLines={2}>
-              {bodyText}
-            </Text>
-
-            <Text style={styles.cardMeta}>{formatDate(note.createdAt)}</Text>
-          </View>
-        </Pressable>
-      </Swipeable>
+          {cardInner}
+        </Swipeable>
+      )}
     </View>
   );
 }
@@ -142,10 +166,32 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#eee',
   },
+  wrapperSelected: {
+    borderColor: '#111',
+  },
   card: {
     flexDirection: 'row',
     padding: 10,
     backgroundColor: '#fff',
+    alignItems: 'center',
+  },
+  cardSelected: {
+    backgroundColor: '#f6f8fb',
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: '#bbb',
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  checkboxChecked: {
+    backgroundColor: '#111',
+    borderColor: '#111',
   },
   thumbBox: {
     width: 96,

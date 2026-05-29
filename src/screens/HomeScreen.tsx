@@ -22,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import MoveToCategorySheet from '../components/MoveToCategorySheet';
 import NoteCard from '../components/NoteCard';
 import PasteUrlModal from '../components/PasteUrlModal';
+import SelectionBar from '../components/SelectionBar';
 import SourcePickerSheet from '../components/SourcePickerSheet';
 import Wordmark from '../components/Wordmark';
 import { listCategories, type Category } from '../lib/categories';
@@ -53,9 +54,12 @@ export default function HomeScreen() {
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const [pendingSource, setPendingSource] = useState<NoteSource | null>(null);
   const [moveTarget, setMoveTarget] = useState<Note | null>(null);
+  const [bulkMoveVisible, setBulkMoveVisible] = useState(false);
   const [sourcePickerVisible, setSourcePickerVisible] = useState(false);
   const [xhsPasteVisible, setXhsPasteVisible] = useState(false);
   const [busyMsg, setBusyMsg] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selectionMode = selectedIds.size > 0;
   const lastHandledRef = useRef<string | null>(null);
 
   const [notes, setNotes] = useState<Note[]>([]);
@@ -242,6 +246,84 @@ export default function HomeScreen() {
     ]);
   };
 
+  const handleLongPressNote = useCallback((note: Note) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(note.id)) next.delete(note.id);
+      else next.add(note.id);
+      return next;
+    });
+  }, []);
+
+  const handleNotePress = useCallback(
+    (note: Note) => {
+      if (selectionMode) {
+        handleLongPressNote(note);
+      } else {
+        setActiveNote(note);
+      }
+    },
+    [selectionMode, handleLongPressNote],
+  );
+
+  const exitSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      const visibleIds = filteredNotes.map((n) => n.id);
+      const allSelected =
+        visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+      if (allSelected) {
+        const next = new Set(prev);
+        visibleIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      const next = new Set(prev);
+      visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [filteredNotes]);
+
+  const confirmBulkDelete = () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    Alert.alert('删除所选笔记？', `这将删除 ${ids.length} 条笔记，不可恢复`, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: async () => {
+          for (const id of ids) {
+            const note = notes.find((n) => n.id === id);
+            if (note) {
+              try {
+                deleteNote(note);
+              } catch {}
+            }
+          }
+          setSelectedIds(new Set());
+          await reloadAll();
+        },
+      },
+    ]);
+  };
+
+  const handleBulkPickCategory = useCallback(
+    async (categoryId: string | undefined) => {
+      const ids = Array.from(selectedIds);
+      setBulkMoveVisible(false);
+      if (ids.length === 0) return;
+      for (const id of ids) {
+        await updateNote(id, { categoryId });
+      }
+      setSelectedIds(new Set());
+      await reloadAll();
+    },
+    [selectedIds, reloadAll],
+  );
+
   const handleMoveToCategory = useCallback((note: Note) => {
     setMoveTarget(note);
   }, []);
@@ -261,9 +343,11 @@ export default function HomeScreen() {
   const renderItem = ({ item }: { item: Note }) => (
     <NoteCard
       note={item}
-      onPress={setActiveNote}
+      onPress={handleNotePress}
       onDelete={confirmDelete}
-      onLongPress={handleMoveToCategory}
+      onLongPress={handleLongPressNote}
+      selectionMode={selectionMode}
+      selected={selectedIds.has(item.id)}
     />
   );
 
@@ -294,17 +378,28 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <Wordmark size={32} />
-        <Pressable
-          onPress={openWebManually}
-          style={({ pressed }) => [styles.headerCta, pressed && styles.headerCtaPressed]}
-          hitSlop={8}
-          accessibilityLabel="新增笔记"
-        >
-          <Ionicons name="add" size={26} color="#111" />
-        </Pressable>
-      </View>
+      {selectionMode ? (
+        <SelectionBar
+          count={selectedIds.size}
+          totalVisible={filteredNotes.length}
+          onExit={exitSelection}
+          onSelectAll={toggleSelectAll}
+          onMove={() => setBulkMoveVisible(true)}
+          onDelete={confirmBulkDelete}
+        />
+      ) : (
+        <View style={styles.header}>
+          <Wordmark size={32} />
+          <Pressable
+            onPress={openWebManually}
+            style={({ pressed }) => [styles.headerCta, pressed && styles.headerCtaPressed]}
+            hitSlop={8}
+            accessibilityLabel="新增笔记"
+          >
+            <Ionicons name="add" size={26} color="#111" />
+          </Pressable>
+        </View>
+      )}
 
       <View style={styles.searchBox}>
         <Ionicons name="search-outline" size={16} color="#888" />
@@ -449,6 +544,20 @@ export default function HomeScreen() {
         categories={categories}
         onPick={handlePickCategory}
         onDismiss={() => setMoveTarget(null)}
+      />
+
+      <MoveToCategorySheet
+        note={
+          bulkMoveVisible
+            ? ({
+                id: '__bulk__',
+                title: `${selectedIds.size} 条笔记`,
+              } as unknown as Note)
+            : null
+        }
+        categories={categories}
+        onPick={handleBulkPickCategory}
+        onDismiss={() => setBulkMoveVisible(false)}
       />
 
       <SourcePickerSheet
