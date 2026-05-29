@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Category } from '../lib/categories';
 import type { Note } from '../lib/notes';
@@ -28,6 +28,7 @@ export default function MoveToCategorySheet({
   onPick,
   onDismiss,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const visible = !!note;
   const rows: Row[] = [
     { id: undefined, label: '未分类' },
@@ -45,8 +46,8 @@ export default function MoveToCategorySheet({
       statusBarTranslucent
     >
       <Pressable style={styles.backdrop} onPress={onDismiss} />
-      <SafeAreaView style={styles.sheetWrap} edges={['bottom']} pointerEvents="box-none">
-        <View style={styles.sheet}>
+      <View style={styles.sheetWrap} pointerEvents="box-none">
+        <View style={[styles.sheet, { paddingBottom: 12 + insets.bottom }]}>
           <View style={styles.handle} />
           <Text style={styles.title}>移动到分类</Text>
           {note?.title || note?.author ? (
@@ -85,7 +86,7 @@ export default function MoveToCategorySheet({
             })}
           </ScrollView>
         </View>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }

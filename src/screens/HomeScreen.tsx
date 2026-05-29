@@ -672,7 +672,8 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: '#e6ecf2',
-    marginTop: 10,
+    marginTop: 6,
+    marginBottom: 12,
   },
   bannerTitle: {
     fontSize: 13,
