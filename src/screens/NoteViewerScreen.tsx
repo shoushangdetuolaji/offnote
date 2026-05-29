@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
   Modal,
@@ -6,6 +7,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  useColorScheme,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,6 +24,24 @@ type Props = {
 export default function NoteViewerScreen({ note, onClose }: Props) {
   const webRef = useRef<WebView>(null);
   const [lightbox, setLightbox] = useState(false);
+  const scheme = useColorScheme();
+  const isDark = scheme === 'dark';
+
+  const theme = useMemo(
+    () =>
+      isDark
+        ? {
+            bg: '#0d0d0e',
+            text: '#eee',
+            statusBarStyle: 'light-content' as const,
+          }
+        : {
+            bg: '#ffffff',
+            text: '#111',
+            statusBarStyle: 'dark-content' as const,
+          },
+    [isDark],
+  );
 
   useEffect(() => {
     if (!note) setLightbox(false);
@@ -49,6 +69,8 @@ export default function NoteViewerScreen({ note, onClose }: Props) {
     } catch {}
   };
 
+  const containerBg = lightbox ? '#000' : theme.bg;
+
   return (
     <Modal
       visible={!!note}
@@ -58,23 +80,41 @@ export default function NoteViewerScreen({ note, onClose }: Props) {
       statusBarTranslucent
     >
       <SafeAreaView
-        style={[styles.container, lightbox && styles.containerImmersive]}
+        style={[styles.container, { backgroundColor: containerBg }]}
         edges={lightbox ? [] : ['top', 'bottom']}
       >
         <StatusBar
-          barStyle="light-content"
-          backgroundColor={lightbox ? '#000' : '#0d0d0e'}
+          barStyle={lightbox ? 'light-content' : theme.statusBarStyle}
+          backgroundColor={containerBg}
           hidden={lightbox}
         />
         {!lightbox && (
-          <View style={styles.topBar}>
-            <Pressable onPress={onClose} style={styles.barBtn}>
-              <Text style={styles.barBtnText}>关闭</Text>
+          <View style={[styles.topBar, { backgroundColor: theme.bg }]}>
+            <Pressable
+              onPress={onClose}
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.barIconBtn,
+                pressed && styles.barIconBtnPressed,
+              ]}
+              accessibilityLabel="返回"
+            >
+              <Ionicons name="chevron-back" size={28} color={theme.text} />
             </Pressable>
-            <Text style={styles.barTitle} numberOfLines={1}>
+            <Text
+              style={[styles.barTitle, { color: theme.text }]}
+              numberOfLines={1}
+            >
               {note?.title ?? note?.author ?? 'OffNote'}
             </Text>
-            <View style={styles.barBtn} />
+            <View style={styles.barIconBtn} />
+            <View
+              style={[
+                styles.barShadow,
+                { backgroundColor: `rgba(0,0,0,${isDark ? 0.08 : 0.05})` },
+              ]}
+              pointerEvents="none"
+            />
           </View>
         )}
         {note && (
@@ -88,7 +128,7 @@ export default function NoteViewerScreen({ note, onClose }: Props) {
             mediaPlaybackRequiresUserAction={false}
             javaScriptEnabled
             onMessage={handleMessage}
-            style={[styles.webview, lightbox && styles.webviewImmersive]}
+            style={[styles.webview, { backgroundColor: containerBg }]}
           />
         )}
       </SafeAreaView>
@@ -97,44 +137,39 @@ export default function NoteViewerScreen({ note, onClose }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0d0d0e',
-  },
-  containerImmersive: {
-    backgroundColor: '#000',
-  },
+  container: { flex: 1 },
   topBar: {
     height: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    backgroundColor: '#0d0d0e',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#2a2a2c',
+    paddingLeft: 2,
+    paddingRight: 12,
+    zIndex: 2,
   },
-  barBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    minWidth: 56,
+  barShadow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '100%',
+    height: 1,
   },
-  barBtnText: {
-    color: '#eee',
-    fontSize: 14,
+  barIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  barIconBtnPressed: {
+    backgroundColor: 'rgba(127,127,127,0.18)',
   },
   barTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#eee',
     flex: 1,
     textAlign: 'center',
+    marginHorizontal: 8,
   },
-  webview: {
-    flex: 1,
-    backgroundColor: '#0d0d0e',
-  },
-  webviewImmersive: {
-    backgroundColor: '#000',
-  },
+  webview: { flex: 1 },
 });
