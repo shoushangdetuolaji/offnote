@@ -141,6 +141,7 @@ export default function NoteCard({
           ref={swipeRef}
           friction={1.6}
           rightThreshold={36}
+          dragOffsetFromRightEdge={30}
           overshootRight={false}
           renderRightActions={renderRightActions}
         >
