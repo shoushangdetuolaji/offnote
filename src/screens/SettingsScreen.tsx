@@ -1,10 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as Application from 'expo-application';
+import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -21,7 +24,18 @@ import {
   pingCobaltInstance,
   setCobaltInstance,
 } from '../lib/cobalt';
+import {
+  checkLatestRelease,
+  downloadApk,
+  installApk,
+  isNewer,
+} from '../lib/update';
 import type { SettingsStackParamList } from '../navigation/SettingsStack';
+
+const CURRENT_VERSION =
+  Constants.expoConfig?.version ??
+  Application.nativeApplicationVersion ??
+  '1.0.0';
 
 type Nav = NativeStackNavigationProp<SettingsStackParamList, 'SettingsList'>;
 
@@ -30,6 +44,8 @@ export default function SettingsScreen() {
   const [input, setInput] = useState('');
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
 
   const refresh = async () => {
     setSaved(await getCobaltInstance());
@@ -83,6 +99,59 @@ export default function SettingsScreen() {
     }
   };
 
+  const startDownload = (apkUrl: string) => {
+    setProgress('准备下载…');
+    downloadApk(apkUrl, (p) => setProgress(`下载中 ${p.label}`))
+      .then(async (fileUri) => {
+        setProgress(null);
+        await installApk(fileUri);
+      })
+      .catch((e) => {
+        setProgress(null);
+        Alert.alert('下载失败', e?.message ?? '请稍后重试，或切换网络');
+      });
+  };
+
+  const handleCheckUpdate = async () => {
+    if (checking || progress) return;
+    setChecking(true);
+    try {
+      const latest = await checkLatestRelease();
+      if (!isNewer(latest.version, CURRENT_VERSION)) {
+        Alert.alert('已是最新版本', `当前版本 v${CURRENT_VERSION}`);
+        return;
+      }
+      const body = latest.notes
+        ? `\n\n更新内容：\n${latest.notes}`
+        : '';
+      if (Platform.OS !== 'android' || !latest.apkUrl) {
+        // iOS 或无 apk 资产：跳转 release 页
+        Alert.alert(
+          `发现新版本 v${latest.version}`,
+          `当前 v${CURRENT_VERSION}${body}`,
+          [
+            { text: '取消', style: 'cancel' },
+            { text: '前往下载', onPress: () => Linking.openURL(latest.htmlUrl) },
+          ],
+        );
+        return;
+      }
+      const apkUrl = latest.apkUrl;
+      Alert.alert(
+        `发现新版本 v${latest.version}`,
+        `当前 v${CURRENT_VERSION}${body}`,
+        [
+          { text: '取消', style: 'cancel' },
+          { text: '下载更新', onPress: () => startDownload(apkUrl) },
+        ],
+      );
+    } catch (e: any) {
+      Alert.alert('检查更新失败', e?.message ?? '请检查网络后重试');
+    } finally {
+      setChecking(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <KeyboardAvoidingView
@@ -106,6 +175,36 @@ export default function SettingsScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color="#bbb" />
           </Pressable>
+
+          <Pressable
+            onPress={handleCheckUpdate}
+            disabled={checking || !!progress}
+            style={({ pressed }) => [
+              styles.navRow,
+              pressed && styles.navRowPressed,
+              (checking || !!progress) && styles.navRowDisabled,
+            ]}
+            android_ripple={{ color: '#eee' }}
+          >
+            <View style={styles.navIcon}>
+              <Ionicons name="cloud-download-outline" size={20} color="#444" />
+            </View>
+            <View style={styles.navBody}>
+              <Text style={styles.navLabel}>检查更新</Text>
+              <Text style={styles.navHint}>
+                {progress
+                  ? progress
+                  : checking
+                    ? '正在检查…'
+                    : '从 GitHub 获取最新版本'}
+              </Text>
+            </View>
+            {!checking && !progress && (
+              <Ionicons name="chevron-forward" size={18} color="#bbb" />
+            )}
+          </Pressable>
+
+          <Text style={styles.versionText}>当前版本 v{CURRENT_VERSION}</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -140,6 +239,15 @@ const styles = StyleSheet.create({
   },
   navRowPressed: {
     backgroundColor: '#f5f5f5',
+  },
+  navRowDisabled: {
+    opacity: 0.6,
+  },
+  versionText: {
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#aaa',
+    marginTop: 8,
   },
   navIcon: {
     width: 32,

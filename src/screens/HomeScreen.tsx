@@ -324,10 +324,6 @@ export default function HomeScreen() {
     [selectedIds, reloadAll],
   );
 
-  const handleMoveToCategory = useCallback((note: Note) => {
-    setMoveTarget(note);
-  }, []);
-
   const handlePickCategory = useCallback(
     async (categoryId: string | undefined) => {
       const note = moveTarget;
@@ -500,7 +496,7 @@ export default function HomeScreen() {
                 <>
                   <Text style={styles.emptyTitle}>还没有离线笔记</Text>
                   <Text style={styles.emptyHint}>
-                    复制 Instagram 链接 → 点右上「+」开始保存
+                    复制小红书 / Instagram 链接 → 点右上「+」开始保存
                   </Text>
                 </>
               ) : (
