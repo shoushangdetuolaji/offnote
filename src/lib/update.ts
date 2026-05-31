@@ -52,26 +52,60 @@ export function isNewer(remote: string, local: string): boolean {
   return false;
 }
 
-/** 拉取最新 release 信息 */
+/**
+ * 检查更新用的 API 端点，依次尝试。
+ * 直连 api.github.com 在国内共享出口 IP 上易被匿名限流（403），
+ * 故追加几个镜像反代作为回退。
+ */
+function releaseApiEndpoints(): string[] {
+  const apiPath = `repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+  const apiUrl = `https://api.github.com/${apiPath}`;
+  return [
+    apiUrl, // 直连优先
+    `https://gh-proxy.com/${apiUrl}`, // 反代 api.github.com（实测可用）
+    `https://api.kkgithub.com/${apiPath}`, // 镜像自带 api（实测可用）
+  ];
+}
+
+/** 拉取最新 release 信息（多端点回退，避开匿名限流 403） */
 export async function checkLatestRelease(): Promise<LatestRelease> {
-  const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
-  const res = await fetch(url, {
-    headers: { Accept: 'application/vnd.github+json' },
-  });
-  if (!res.ok) {
-    throw new Error(`检查更新失败（HTTP ${res.status}）`);
+  let lastStatus = 0;
+  let lastErr: unknown;
+
+  for (const url of releaseApiEndpoints()) {
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: 'application/vnd.github+json' },
+      });
+      if (!res.ok) {
+        lastStatus = res.status;
+        continue; // 403/限流等，换下一个端点
+      }
+      const data = await res.json();
+      const tag: string = data.tag_name ?? '';
+      const assets: any[] = Array.isArray(data.assets) ? data.assets : [];
+      const apk = assets.find((a) =>
+        String(a.name).toLowerCase().endsWith('.apk'),
+      );
+      return {
+        version: tag.replace(/^v/i, ''),
+        tag,
+        notes: (data.body ?? '').trim(),
+        apkUrl: apk?.browser_download_url ?? null,
+        htmlUrl:
+          data.html_url ??
+          `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
+      };
+    } catch (e) {
+      lastErr = e;
+    }
   }
-  const data = await res.json();
-  const tag: string = data.tag_name ?? '';
-  const assets: any[] = Array.isArray(data.assets) ? data.assets : [];
-  const apk = assets.find((a) => String(a.name).toLowerCase().endsWith('.apk'));
-  return {
-    version: tag.replace(/^v/i, ''),
-    tag,
-    notes: (data.body ?? '').trim(),
-    apkUrl: apk?.browser_download_url ?? null,
-    htmlUrl: data.html_url ?? `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
-  };
+
+  throw new Error(
+    lastStatus
+      ? `检查更新失败（HTTP ${lastStatus}），请稍后重试`
+      : `检查更新失败：${lastErr instanceof Error ? lastErr.message : '网络错误'}`,
+  );
 }
 
 export type DownloadProgress = { fraction: number; label: string };
