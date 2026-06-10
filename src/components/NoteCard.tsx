@@ -43,7 +43,21 @@ export default function NoteCard({
     return null;
   })();
 
-  const bodyText = note.caption || note.note || note.title || note.id;
+  const bodyText = note.caption?.trim();
+  const remark = note.note?.trim();
+
+  // title 在抓取时被拼成「作者_标题」（见 lib/xhs buildTitle），
+  // 作者部分用相同规则清洗过；这里按作者精确剥掉开头前缀，避免与 @作者 行重复。
+  const displayTitle = (() => {
+    const raw = note.title?.trim();
+    if (!raw) return note.author ? `@${note.author}` : '未命名';
+    const authorSlug = note.author?.replace(/[^A-Za-z0-9_一-龥]/g, '');
+    if (authorSlug && raw.startsWith(`${authorSlug}_`)) {
+      const stripped = raw.slice(authorSlug.length + 1).trim();
+      if (stripped) return stripped;
+    }
+    return raw;
+  })();
 
   const cardInner = (
     <Pressable
@@ -93,7 +107,7 @@ export default function NoteCard({
       <View style={styles.cardBody}>
         <View style={styles.headerRow}>
           <Text style={styles.cardTitle} numberOfLines={1}>
-            {note.title || (note.author ? `@${note.author}` : '未命名')}
+            {displayTitle}
           </Text>
           {note.starred && (
             <Ionicons
@@ -104,12 +118,29 @@ export default function NoteCard({
             />
           )}
         </View>
-        {note.author && note.title && (
-          <Text style={styles.cardAuthor}>@{note.author}</Text>
+        {note.author && (
+          <Text style={styles.cardAuthor} numberOfLines={1}>
+            @{note.author}
+          </Text>
         )}
-        <Text style={styles.cardCaption} numberOfLines={2}>
-          {bodyText}
-        </Text>
+        {bodyText ? (
+          <Text style={styles.cardCaption} numberOfLines={2}>
+            {bodyText}
+          </Text>
+        ) : null}
+        {remark ? (
+          <View style={styles.remarkRow}>
+            <Ionicons
+              name="create-outline"
+              size={12}
+              color="#f5b400"
+              style={styles.remarkIcon}
+            />
+            <Text style={styles.remarkText} numberOfLines={1}>
+              {remark}
+            </Text>
+          </View>
+        ) : null}
         <Text style={styles.cardMeta}>{formatDate(note.createdAt)}</Text>
       </View>
     </Pressable>
@@ -174,7 +205,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: 10,
     backgroundColor: '#fff',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   cardSelected: {
     backgroundColor: '#f6f8fb',
@@ -269,10 +300,30 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginBottom: 6,
   },
+  remarkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fff9e6',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    marginBottom: 6,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  remarkIcon: {
+    marginTop: 1,
+  },
+  remarkText: {
+    fontSize: 12,
+    color: '#9a7b00',
+    flexShrink: 1,
+  },
   cardMeta: {
     fontSize: 11,
     color: '#999',
-    marginTop: 'auto',
+    marginTop: 2,
   },
   actionsContainer: {
     width: 88,

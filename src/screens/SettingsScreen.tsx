@@ -1,3 +1,4 @@
+import { useActionSheet } from '@expo/react-native-action-sheet';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,6 +19,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import {
+  exportBackup,
+  importBackup,
+  shareBackup,
+} from '../lib/backup';
 import {
   clearCobaltInstance,
   getCobaltInstance,
@@ -41,11 +47,13 @@ type Nav = NativeStackNavigationProp<SettingsStackParamList, 'SettingsList'>;
 
 export default function SettingsScreen() {
   const navigation = useNavigation<Nav>();
+  const { showActionSheetWithOptions } = useActionSheet();
   const [input, setInput] = useState('');
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
 
   const refresh = async () => {
     setSaved(await getCobaltInstance());
@@ -152,6 +160,61 @@ export default function SettingsScreen() {
     }
   };
 
+  const runExport = async () => {
+    setBackupMsg('正在打包数据…');
+    try {
+      const zipUri = await exportBackup(setBackupMsg);
+      setBackupMsg(null);
+      await shareBackup(zipUri);
+    } catch (e: any) {
+      setBackupMsg(null);
+      Alert.alert('导出失败', e?.message ?? '请稍后重试');
+    }
+  };
+
+  const runImport = async () => {
+    Alert.alert(
+      '从备份恢复',
+      '将合并备份里的笔记与分类，已存在的笔记会跳过、不会覆盖。',
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '选择备份文件',
+          onPress: async () => {
+            setBackupMsg('正在恢复…');
+            try {
+              const result = await importBackup(setBackupMsg);
+              setBackupMsg(null);
+              if (!result) return; // 用户取消选择
+              Alert.alert(
+                '恢复完成',
+                `新增 ${result.added} 条，跳过 ${result.skipped} 条（已存在）。\n回到首页会自动刷新。`,
+              );
+            } catch (e: any) {
+              setBackupMsg(null);
+              Alert.alert('恢复失败', e?.message ?? '备份文件可能损坏');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleBackup = () => {
+    if (backupMsg) return;
+    showActionSheetWithOptions(
+      {
+        title: '备份与恢复',
+        options: ['导出备份', '从备份恢复', '取消'],
+        cancelButtonIndex: 2,
+      },
+      (index) => {
+        if (index === 0) runExport();
+        else if (index === 1) runImport();
+      },
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <KeyboardAvoidingView
@@ -200,6 +263,30 @@ export default function SettingsScreen() {
               </Text>
             </View>
             {!checking && !progress && (
+              <Ionicons name="chevron-forward" size={18} color="#bbb" />
+            )}
+          </Pressable>
+
+          <Pressable
+            onPress={handleBackup}
+            disabled={!!backupMsg}
+            style={({ pressed }) => [
+              styles.navRow,
+              pressed && styles.navRowPressed,
+              !!backupMsg && styles.navRowDisabled,
+            ]}
+            android_ripple={{ color: '#eee' }}
+          >
+            <View style={styles.navIcon}>
+              <Ionicons name="archive-outline" size={20} color="#444" />
+            </View>
+            <View style={styles.navBody}>
+              <Text style={styles.navLabel}>备份与恢复</Text>
+              <Text style={styles.navHint}>
+                {backupMsg ?? '导出全部笔记为 zip，或从备份恢复'}
+              </Text>
+            </View>
+            {!backupMsg && (
               <Ionicons name="chevron-forward" size={18} color="#bbb" />
             )}
           </Pressable>

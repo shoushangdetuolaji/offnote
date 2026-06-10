@@ -533,6 +533,14 @@ export default function HomeScreen() {
       <NoteViewerScreen
         note={activeNote}
         onClose={() => setActiveNote(null)}
+        onDeleted={() => {
+          setActiveNote(null);
+          reloadAll();
+        }}
+        onUpdated={(n) => {
+          setActiveNote(n);
+          reloadAll();
+        }}
       />
 
       <MoveToCategorySheet
