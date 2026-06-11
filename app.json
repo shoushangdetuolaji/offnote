@@ -2,18 +2,17 @@
   "expo": {
     "name": "offnote",
     "slug": "offnote",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
+        "backgroundColor": "#FDF7F3",
+        "foregroundImage": "./assets/logo.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "permissions": [
@@ -41,7 +40,26 @@
         }
       ],
       "expo-font",
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/start.png",
+          "resizeMode": "cover",
+          "backgroundColor": "#FDF7F3",
+          "ios": {
+            "enableFullScreenImage_legacy": true,
+            "image": "./assets/start.png",
+            "resizeMode": "cover",
+            "backgroundColor": "#FDF7F3"
+          },
+          "android": {
+            "image": "./assets/start.png",
+            "resizeMode": "cover",
+            "backgroundColor": "#FDF7F3"
+          }
+        }
+      ]
     ],
     "extra": {
       "eas": {
