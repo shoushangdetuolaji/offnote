@@ -46,9 +46,9 @@ export async function downloadAndSave(
   try {
     const dir = ensureOffNoteDir();
     const destination = new File(dir, item.filename);
+    if (destination.exists) destination.delete();
 
     const task = File.createDownloadTask(item.url, destination, {
-      idempotent: true,
       onProgress: ({ bytesWritten, totalBytes }) => {
         const total = totalBytes || 0;
         const written = bytesWritten || 0;
@@ -58,7 +58,7 @@ export async function downloadAndSave(
     });
 
     const file = await task.downloadAsync();
-    return { ok: true, localUri: file.uri };
+    return { ok: true, localUri: file?.uri ?? destination.uri };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? '下载异常' };
   }

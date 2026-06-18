@@ -2,6 +2,7 @@ import { useActionSheet } from '@expo/react-native-action-sheet';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as Clipboard from 'expo-clipboard';
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
@@ -9,6 +10,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -17,7 +19,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   exportBackup,
@@ -31,11 +33,17 @@ import {
   setCobaltInstance,
 } from '../lib/cobalt';
 import {
+  buildLinksExportText,
+  parseImportLinks,
+} from '../lib/linkTransfer';
+import { listNotes } from '../lib/notes';
+import {
   checkLatestRelease,
   downloadApk,
   installApk,
   isNewer,
 } from '../lib/update';
+import { saveXhsFromUrl } from '../lib/xhs';
 import type { SettingsStackParamList } from '../navigation/SettingsStack';
 
 const CURRENT_VERSION =
@@ -48,12 +56,17 @@ type Nav = NativeStackNavigationProp<SettingsStackParamList, 'SettingsList'>;
 export default function SettingsScreen() {
   const navigation = useNavigation<Nav>();
   const { showActionSheetWithOptions } = useActionSheet();
+  const insets = useSafeAreaInsets();
   const [input, setInput] = useState('');
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const [bulkImportVisible, setBulkImportVisible] = useState(false);
+  const [bulkImportText, setBulkImportText] = useState('');
+  const [bulkImportMsg, setBulkImportMsg] = useState<string | null>(null);
+  const [bulkImportRunning, setBulkImportRunning] = useState(false);
 
   const refresh = async () => {
     setSaved(await getCobaltInstance());
@@ -200,17 +213,96 @@ export default function SettingsScreen() {
     );
   };
 
+  const runExportLinks = async (source: 'rednote' | 'instagram') => {
+    const label = source === 'rednote' ? '小红书' : 'Instagram';
+    try {
+      setBackupMsg('正在整理链接…');
+      const text = await buildLinksExportText(source);
+      await Clipboard.setStringAsync(text);
+      setBackupMsg(null);
+      Alert.alert(`已复制${label}链接`, `${label}链接清单已复制到剪贴板。`);
+    } catch (e: any) {
+      setBackupMsg(null);
+      Alert.alert('导出失败', e?.message ?? '请稍后重试');
+    }
+  };
+
+  const runBulkImportLinks = async (text: string) => {
+    const parsed = parseImportLinks(text);
+    const existing = new Set(
+      (await listNotes()).map((note) => note.sourceUrl).filter(Boolean),
+    );
+    const jobs = parsed.rednote.filter((url) => !existing.has(url));
+
+    if (!jobs.length) {
+      Alert.alert('没有可导入的新链接', '没有找到小红书链接，或链接已经保存过。');
+      return;
+    }
+
+    setBulkImportText('');
+    setBulkImportVisible(false);
+    setBulkImportRunning(true);
+    setBulkImportMsg(`后台导入 0/${jobs.length}`);
+
+    let added = 0;
+    let failed = 0;
+    for (let i = 0; i < jobs.length; i++) {
+      const url = jobs[i];
+      const label = '小红书';
+      setBulkImportMsg(`${label} ${i + 1}/${jobs.length}：准备中…`);
+
+      try {
+        const result = await saveXhsFromUrl(url, {
+          onProgress: (msg) => {
+            setBulkImportMsg(`${label} ${i + 1}/${jobs.length}：${msg}`);
+          },
+        });
+        if (result.ok) added += 1;
+        else failed += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+
+    setBulkImportRunning(false);
+    setBulkImportMsg(null);
+    Alert.alert(
+      '批量导入完成',
+      `成功 ${added} 条，失败 ${failed} 条。\n回到首页会自动刷新。`,
+    );
+  };
+
+  const confirmBulkImport = () => {
+    const parsed = parseImportLinks(bulkImportText);
+    const jobs = parsed.rednote;
+    if (!jobs.length) {
+      Alert.alert('没有找到可导入链接', '请粘贴小红书链接。');
+      return;
+    }
+    Alert.alert(
+      '开始后台导入？',
+      `找到 ${parsed.rednote.length} 条小红书链接。导入期间可以离开设置页，但请不要退出 App。`,
+      [
+        { text: '取消', style: 'cancel' },
+        { text: '开始', onPress: () => runBulkImportLinks(bulkImportText) },
+      ],
+    );
+  };
+
   const handleBackup = () => {
     if (backupMsg) return;
     showActionSheetWithOptions(
       {
         title: '备份与恢复',
-        options: ['导出备份', '从备份恢复', '取消'],
-        cancelButtonIndex: 2,
+        options: ['导出 zip 备份', '导出小红书链接', '导出 Instagram 链接', '从 zip 恢复', '取消'],
+        cancelButtonIndex: 4,
+        containerStyle: { paddingBottom: insets.bottom },
       },
       (index) => {
         if (index === 0) runExport();
-        else if (index === 1) runImport();
+        else if (index === 1) runExportLinks('rednote');
+        else if (index === 2) runExportLinks('instagram');
+        else if (index === 3) runImport();
       },
     );
   };
@@ -283,7 +375,7 @@ export default function SettingsScreen() {
             <View style={styles.navBody}>
               <Text style={styles.navLabel}>备份与恢复</Text>
               <Text style={styles.navHint}>
-                {backupMsg ?? '导出全部笔记为 zip，或从备份恢复'}
+                {backupMsg ?? '导出 zip / 分平台链接，或从备份恢复'}
               </Text>
             </View>
             {!backupMsg && (
@@ -291,9 +383,76 @@ export default function SettingsScreen() {
             )}
           </Pressable>
 
+          <Pressable
+            onPress={() => setBulkImportVisible(true)}
+            disabled={bulkImportRunning}
+            style={({ pressed }) => [
+              styles.navRow,
+              pressed && styles.navRowPressed,
+              bulkImportRunning && styles.navRowDisabled,
+            ]}
+            android_ripple={{ color: '#eee' }}
+          >
+            <View style={styles.navIcon}>
+              <Ionicons name="copy-outline" size={20} color="#444" />
+            </View>
+            <View style={styles.navBody}>
+              <Text style={styles.navLabel}>批量导入链接</Text>
+              <Text style={styles.navHint}>
+                {bulkImportMsg ?? '粘贴小红书链接文本，后台逐条保存'}
+              </Text>
+            </View>
+            {!bulkImportRunning && (
+              <Ionicons name="chevron-forward" size={18} color="#bbb" />
+            )}
+          </Pressable>
+
           <Text style={styles.versionText}>当前版本 v{CURRENT_VERSION}</Text>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={bulkImportVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setBulkImportVisible(false)}
+      >
+        <SafeAreaView style={styles.modalContainer} edges={['top', 'bottom']}>
+          <View style={styles.modalHeader}>
+            <Pressable onPress={() => setBulkImportVisible(false)} hitSlop={8}>
+              <Text style={styles.modalCancel}>取消</Text>
+            </Pressable>
+            <Text style={styles.modalTitle}>批量导入</Text>
+            <Pressable
+              onPress={confirmBulkImport}
+              disabled={!bulkImportText.trim()}
+              hitSlop={8}
+            >
+              <Text
+                style={[
+                  styles.modalAction,
+                  !bulkImportText.trim() && styles.modalActionDisabled,
+                ]}
+              >
+                开始
+              </Text>
+            </Pressable>
+          </View>
+          <Text style={styles.modalHint}>
+            粘贴任意文本，会自动提取小红书链接。开始后会在后台逐条下载保存。
+          </Text>
+          <TextInput
+            value={bulkImportText}
+            onChangeText={setBulkImportText}
+            placeholder="每行一个链接，或直接粘贴整段文本"
+            placeholderTextColor="#aaa"
+            multiline
+            textAlignVertical="top"
+            autoFocus
+            style={styles.bulkInput}
+          />
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -461,5 +620,56 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#a06200',
     lineHeight: 18,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  modalHeader: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#eee',
+    paddingHorizontal: 16,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111',
+  },
+  modalCancel: {
+    fontSize: 15,
+    color: '#444',
+  },
+  modalAction: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1f6feb',
+  },
+  modalActionDisabled: {
+    color: '#bbb',
+  },
+  modalHint: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 10,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#666',
+  },
+  bulkInput: {
+    flex: 1,
+    margin: 16,
+    marginTop: 0,
+    borderWidth: 1,
+    borderColor: '#e4e4e4',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#111',
+    backgroundColor: '#fafafa',
   },
 });

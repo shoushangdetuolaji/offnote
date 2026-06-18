@@ -45,16 +45,20 @@
         "expo-splash-screen",
         {
           "image": "./assets/start.png",
+          "imageWidth": 414,
           "resizeMode": "cover",
           "backgroundColor": "#FDF7F3",
+          "enableFullScreenImage_legacy": true,
           "ios": {
             "enableFullScreenImage_legacy": true,
             "image": "./assets/start.png",
+            "imageWidth": 414,
             "resizeMode": "cover",
             "backgroundColor": "#FDF7F3"
           },
           "android": {
             "image": "./assets/start.png",
+            "imageWidth": 288,
             "resizeMode": "cover",
             "backgroundColor": "#FDF7F3"
           }

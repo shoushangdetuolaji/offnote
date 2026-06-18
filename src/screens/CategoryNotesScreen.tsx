@@ -76,6 +76,14 @@ export default function CategoryNotesScreen({ navigation, route }: Props) {
       <NoteViewerScreen
         note={activeNote}
         onClose={() => setActiveNote(null)}
+        onDeleted={() => {
+          setActiveNote(null);
+          reload();
+        }}
+        onUpdated={(n) => {
+          setActiveNote(n);
+          reload();
+        }}
       />
     </SafeAreaView>
   );

@@ -31,6 +31,31 @@ const INJECTED_JS = `
     try { window.ReactNativeWebView.postMessage(JSON.stringify(payload)); } catch (e) {}
   }
 
+  function findInstagramUrl(text) {
+    var m = String(text || '').match(/https?:\\/\\/[^\\s"'<>]*instagram\\.com\\/[^\\s"'<>]+/i);
+    return m ? m[0].replace(/[),.;，。；、]+$/g, '') : '';
+  }
+
+  function rememberSourceUrl(url) {
+    if (!url || window.__offnoteSourceUrl === url) return;
+    window.__offnoteSourceUrl = url;
+    send({ type: 'sourceUrl', url: url });
+  }
+
+  function scanSourceUrl() {
+    var fields = Array.from(document.querySelectorAll('input, textarea'));
+    for (var i = 0; i < fields.length; i++) {
+      var hit = findInstagramUrl(fields[i].value);
+      if (hit) {
+        rememberSourceUrl(hit);
+        return hit;
+      }
+    }
+    var textHit = findInstagramUrl(document.body && document.body.innerText);
+    if (textHit) rememberSourceUrl(textHit);
+    return textHit;
+  }
+
   function captureBlob(href, fn) {
     try {
       fetch(href).then(function (r) { return r.blob(); }).then(function (b) {
@@ -54,6 +79,7 @@ const INJECTED_JS = `
           e.preventDefault();
           e.stopPropagation();
         } else if (/^https?:/i.test(href)) {
+          rememberSourceUrl(findInstagramUrl(document.body && document.body.innerText));
           send({ type: 'download', url: href, filename: fn });
         }
         break;
@@ -124,6 +150,7 @@ const INJECTED_JS = `
       if (/^blob:/i.test(href)) {
         captureBlob(href, fn);
       } else if (/^https?:/i.test(href)) {
+        rememberSourceUrl(scanSourceUrl());
         send({ type: 'download', url: href, filename: fn });
       }
       setTimeout(step, 350);
@@ -134,9 +161,61 @@ const INJECTED_JS = `
   var observer = new MutationObserver(function () { refreshPanel(); });
   observer.observe(document.body, { childList: true, subtree: true });
   setTimeout(refreshPanel, 800);
+  document.addEventListener('input', scanSourceUrl, true);
+  document.addEventListener('change', scanSourceUrl, true);
+  setInterval(scanSourceUrl, 1200);
 })();
 true;
 `;
+
+function buildAutofillJs(url: string): string {
+  return `
+(function () {
+  var url = ${JSON.stringify(url)};
+  if (!url || window.__offnoteLastFilledUrl === url) return true;
+
+  function setNativeValue(el, value) {
+    var proto = el instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    var setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) setter.call(el, value);
+    else el.value = value;
+  }
+
+  function fill() {
+    var fields = Array.from(document.querySelectorAll('input, textarea'));
+    var field = fields.find(function (el) {
+      var hint = [
+        el.getAttribute('placeholder') || '',
+        el.getAttribute('aria-label') || '',
+        el.name || '',
+        el.id || ''
+      ].join(' ').toLowerCase();
+      return /link|url|paste/.test(hint);
+    }) || fields[0];
+
+    if (!field) return false;
+    setNativeValue(field, url);
+    field.focus();
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+    window.__offnoteLastFilledUrl = url;
+    return true;
+  }
+
+  if (!fill()) {
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      if (fill() || tries > 20) clearInterval(timer);
+    }, 300);
+  }
+  return true;
+})();
+true;
+`;
+}
 
 function kindFromExt(ext: string): MediaKind {
   return /^(jpg|jpeg|png|gif|webp)$/i.test(ext) ? 'image' : 'video';
@@ -168,19 +247,35 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
   const [metadata, setMetadata] = useState<IgMetadata | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [capturedSourceUrl, setCapturedSourceUrl] = useState<string | null>(null);
+  const effectiveSourceUrl = sourceUrl ?? capturedSourceUrl;
 
   useEffect(() => {
     if (!visible) return;
     handledRef.current.clear();
     setItems([]);
     setMetadata(null);
+    setMetaLoading(false);
+    setCapturedSourceUrl(null);
     setShowRename(false);
     listCategories().then(setCategories);
-    if (!sourceUrl) return;
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!effectiveSourceUrl) return;
     setMetaLoading(true);
-    fetchIgMetadata(sourceUrl)
+    fetchIgMetadata(effectiveSourceUrl)
       .then((m) => setMetadata(m))
       .finally(() => setMetaLoading(false));
+  }, [visible, effectiveSourceUrl]);
+
+  useEffect(() => {
+    if (!visible || !sourceUrl) return;
+    const timer = setTimeout(() => {
+      webviewRef.current?.injectJavaScript(buildAutofillJs(sourceUrl));
+    }, 700);
+    return () => clearTimeout(timer);
   }, [visible, sourceUrl]);
 
   const collectUrl = (url: string) => {
@@ -213,6 +308,8 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
         collectUrl(data.url);
       } else if (data.type === 'blob' && typeof data.dataUrl === 'string') {
         collectBase64(data.dataUrl);
+      } else if (data.type === 'sourceUrl' && typeof data.url === 'string') {
+        setCapturedSourceUrl((prev) => prev ?? data.url);
       }
     } catch {}
   };
@@ -254,13 +351,18 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
     setShowRename(false);
     setBusyMsg('正在保存…');
     const titleOnly = finalName.replace(/\.[A-Za-z0-9]+$/, '');
+    const finalMetadata =
+      metadata ??
+      (effectiveSourceUrl
+        ? { sourceUrl: effectiveSourceUrl, shortcode: null }
+        : null);
     const result = await createNote({
       title: titleOnly,
       note,
       categoryId,
       source: 'instagram',
       items,
-      metadata,
+      metadata: finalMetadata,
       onItemProgress: (i, total, f) => {
         const overall = ((i + f) / total) * 100;
         setBusyMsg(`保存第 ${i + 1}/${total} 项 ${Math.round(overall)}%`);
@@ -329,6 +431,11 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
             onShouldStartLoadWithRequest={handleShouldStart}
             onLoadStart={() => setLoading(true)}
             onLoadEnd={() => setLoading(false)}
+            onLoadProgress={({ nativeEvent }) => {
+              if (nativeEvent.progress >= 0.9 && sourceUrl) {
+                webviewRef.current?.injectJavaScript(buildAutofillJs(sourceUrl));
+              }
+            }}
             startInLoadingState
             javaScriptEnabled
             domStorageEnabled

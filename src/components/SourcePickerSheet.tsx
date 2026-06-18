@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { NoteSource } from '../lib/notes';
 
@@ -32,19 +32,21 @@ const SOURCES: Row[] = [
     source: 'rednote',
     label: '小红书',
     hint: '粘贴小红书链接直接导入',
-    icon: require('../../assets/rednote.png'),
-    ratio: 205 / 96,
+    icon: require('../../assets/rednote.webp'),
+    ratio: 1,
   },
   {
     source: 'instagram',
     label: 'Instagram',
     hint: '通过 Cobalt 解析下载',
-    icon: require('../../assets/Instagram.png'),
+    icon: require('../../assets/instagram.webp'),
     ratio: 1,
   },
 ];
 
 export default function SourcePickerSheet({ visible, onPick, onDismiss }: Props) {
+  const insets = useSafeAreaInsets();
+
   return (
     <Modal
       visible={visible}
@@ -54,8 +56,8 @@ export default function SourcePickerSheet({ visible, onPick, onDismiss }: Props)
       statusBarTranslucent
     >
       <Pressable style={styles.backdrop} onPress={onDismiss} />
-      <SafeAreaView style={styles.sheetWrap} edges={['bottom']} pointerEvents="box-none">
-        <View style={styles.sheet}>
+      <View style={styles.sheetWrap} pointerEvents="box-none">
+        <View style={[styles.sheet, { paddingBottom: 12 + insets.bottom }]}>
           <View style={styles.handle} />
           <Text style={styles.title}>从哪里导入笔记</Text>
 
@@ -92,7 +94,7 @@ export default function SourcePickerSheet({ visible, onPick, onDismiss }: Props)
             </Pressable>
           ))}
         </View>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
@@ -114,7 +116,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
-    paddingHorizontal: 20,
+    paddingHorizontal: 14,
     paddingTop: 8,
     paddingBottom: 12,
   },
@@ -136,7 +138,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
   },
   rowDivider: {
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -146,11 +148,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   iconBox: {
-    width: 80,
+    width: 58,
     height: ICON_HEIGHT,
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 14,
   },
   body: {
     flex: 1,

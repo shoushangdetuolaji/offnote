@@ -28,6 +28,7 @@ export type RenderInput = {
   title?: string;
   author?: string;
   caption?: string;
+  note?: string;
   media: NoteMedia[];
   thumbnailFilename?: string;
   sourceUrl?: string;
@@ -112,6 +113,7 @@ function carouselHtml(input: RenderInput): string {
 export function renderNoteHtml(input: RenderInput): string {
   const author = input.author ?? '';
   const caption = input.caption ?? '';
+  const note = input.note?.trim() ?? '';
   const title = input.title ?? (author ? `@${author}` : 'OffNote');
   const dateStr = formatDate(input.createdAt);
   const total = input.media.length;
@@ -120,6 +122,16 @@ export function renderNoteHtml(input: RenderInput): string {
 
   const sourceLine = input.sourceUrl
     ? `<a class="source" href="${escape(input.sourceUrl)}" target="_blank" rel="noreferrer">查看原帖</a>`
+    : '';
+  const remarkBlock = note
+    ? `<button class="remark" id="offnote-remark" type="button" aria-label="查看备注">
+        <span class="remark-icon" aria-hidden="true"></span>
+        <span class="remark-body">
+          <span class="remark-label">备注</span>
+          <span class="remark-text">${escape(note)}</span>
+        </span>
+        <span class="remark-chevron" aria-hidden="true"></span>
+      </button>`
     : '';
 
   return `<!doctype html>
@@ -204,6 +216,65 @@ export function renderNoteHtml(input: RenderInput): string {
   .meta { margin-top: 22px; padding-top: 14px; border-top: 1px solid #2a2a2c; font-size: 12px; color: #888; display: flex; gap: 14px; flex-wrap: wrap; }
   .source { color: #6ea9ff; text-decoration: none; }
   .source:active { opacity: .6; }
+  .remark {
+    width: 100%;
+    margin: 28px 0 0;
+    padding: 16px 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 0;
+    border-top: 1px solid #2a2a2c;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+  }
+  .remark:active { opacity: .65; }
+  .remark-icon {
+    width: 22px;
+    height: 26px;
+    flex: 0 0 auto;
+    border: 2px solid #888;
+    border-radius: 4px;
+    position: relative;
+  }
+  .remark-icon::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    top: 8px;
+    height: 2px;
+    background: #888;
+    box-shadow: 0 6px 0 #888;
+  }
+  .remark-body {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .remark-label {
+    font-size: 13px;
+    color: #999;
+  }
+  .remark-text {
+    font-size: 15px;
+    color: #eee;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .remark-chevron {
+    width: 10px;
+    height: 10px;
+    flex: 0 0 auto;
+    border-right: 2px solid #777;
+    border-bottom: 2px solid #777;
+    transform: rotate(-45deg);
+    margin-right: 3px;
+  }
 
   @media (prefers-color-scheme: light) {
     html, body { background: #fff; color: #111; }
@@ -211,6 +282,8 @@ export function renderNoteHtml(input: RenderInput): string {
     .caption { color: #222; }
     .meta { border-top-color: #eee; color: #888; }
     .source { color: #1f6feb; }
+    .remark { border-top-color: #eee; }
+    .remark-text { color: #111; }
     .dot { background: rgba(0,0,0,.2); }
     .dot.active { background: #111; }
   }
@@ -259,6 +332,7 @@ export function renderNoteHtml(input: RenderInput): string {
       <span>${escape(dateStr)}</span>
       ${sourceLine}
     </div>
+    ${remarkBlock}
   </div>
 
   <div id="lb" role="dialog" aria-modal="true" aria-hidden="true">
@@ -282,6 +356,24 @@ export function renderNoteHtml(input: RenderInput): string {
           }));
         }
       } catch (e) {}
+    }
+
+    function notifyRemark() {
+      try {
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'remark'
+          }));
+        }
+      } catch (e) {}
+    }
+
+    var remark = document.getElementById('offnote-remark');
+    if (remark) {
+      remark.addEventListener('click', function (e) {
+        e.preventDefault();
+        notifyRemark();
+      });
     }
 
     function open(src) {

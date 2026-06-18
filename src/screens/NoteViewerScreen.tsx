@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActionSheetIOS,
   Alert,
   BackHandler,
   Keyboard,
@@ -8,6 +9,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -24,6 +26,8 @@ import type { WebViewMessageEvent } from 'react-native-webview';
 
 import { deleteNote, updateNote, type Note } from '../lib/notes';
 
+type RemarkMode = 'view' | 'edit' | null;
+
 type Props = {
   note: Note | null;
   onClose: () => void;
@@ -38,8 +42,9 @@ export default function NoteViewerScreen({
   onUpdated,
 }: Props) {
   const webRef = useRef<WebView>(null);
+  const htmlSyncRef = useRef<string | null>(null);
   const [lightbox, setLightbox] = useState(false);
-  const [remarkOpen, setRemarkOpen] = useState(false);
+  const [remarkMode, setRemarkMode] = useState<RemarkMode>(null);
   const [remarkDraft, setRemarkDraft] = useState('');
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme();
@@ -62,19 +67,100 @@ export default function NoteViewerScreen({
   );
   const barBorder = isDark ? '#2a2a2c' : '#ececec';
 
+  const remarkInjectJs = useMemo(() => {
+    const remarkText = note?.note?.trim() ?? '';
+    return `
+(function () {
+  var text = ${JSON.stringify(remarkText)};
+  var hasText = text.length > 0;
+
+  function postRemark() {
+    try {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'remark' }));
+      }
+    } catch (e) {}
+  }
+
+  if (!document.getElementById('offnote-remark-runtime-style')) {
+    var style = document.createElement('style');
+    style.id = 'offnote-remark-runtime-style';
+    style.textContent = [
+      '.remark{width:100%;margin:28px 0 0;padding:16px 0;display:flex;align-items:center;gap:12px;border:0;border-top:1px solid #2a2a2c;background:transparent;color:inherit;font:inherit;text-align:left;}',
+      '.remark:active{opacity:.65;}',
+      '.remark-icon{width:22px;height:26px;flex:0 0 auto;border:2px solid #888;border-radius:4px;position:relative;}',
+      '.remark-icon:before{content:"";position:absolute;left:4px;right:4px;top:8px;height:2px;background:#888;box-shadow:0 6px 0 #888;}',
+      '.remark-body{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px;}',
+      '.remark-label{font-size:13px;color:#999;}',
+      '.remark-text{font-size:15px;color:#eee;white-space:pre-wrap;word-break:break-word;}',
+      '.remark-empty .remark-text{color:#888;}',
+      '.remark-chevron{width:10px;height:10px;flex:0 0 auto;border-right:2px solid #777;border-bottom:2px solid #777;transform:rotate(-45deg);margin-right:3px;}',
+      '@media (prefers-color-scheme: light){.remark{border-top-color:#eee;}.remark-text{color:#111;}.remark-empty .remark-text{color:#999;}}'
+    ].join('');
+    document.head.appendChild(style);
+  }
+
+  var remark = document.getElementById('offnote-remark');
+  if (!remark) {
+    remark = document.createElement('button');
+    remark.id = 'offnote-remark';
+    remark.className = 'remark';
+    remark.type = 'button';
+    remark.innerHTML = '<span class="remark-icon" aria-hidden="true"></span><span class="remark-body"><span class="remark-label">备注</span><span class="remark-text"></span></span><span class="remark-chevron" aria-hidden="true"></span>';
+  }
+
+  if (!remark.getAttribute('data-offnote-bound')) {
+    remark.setAttribute('data-offnote-bound', '1');
+    remark.addEventListener('click', function (e) {
+      e.preventDefault();
+      postRemark();
+    });
+  }
+
+  if (!remark.parentNode) {
+    var meta = document.querySelector('.meta');
+    var wrap = document.querySelector('.wrap') || document.body;
+    if (meta && meta.parentNode) {
+      meta.insertAdjacentElement('afterend', remark);
+    } else {
+      wrap.appendChild(remark);
+    }
+  }
+
+  remark.classList.toggle('remark-empty', !hasText);
+  remark.setAttribute('aria-label', hasText ? '查看备注' : '添加备注');
+  var body = remark.querySelector('.remark-text');
+  if (body) body.textContent = hasText ? text : '添加备注';
+})();
+true;
+`;
+  }, [note?.note]);
+
   useEffect(() => {
     if (!note) {
       setLightbox(false);
-      setRemarkOpen(false);
+      setRemarkMode(null);
+      setRemarkDraft('');
+      htmlSyncRef.current = null;
+      return;
+    }
+    if (note.note?.trim()) {
+      const syncKey = `${note.id}:${note.note}`;
+      if (htmlSyncRef.current === syncKey) return;
+      htmlSyncRef.current = syncKey;
+      updateNote(note.id, { note: note.note }).then((updated) => {
+        if (!updated) return;
+        webRef.current?.reload();
+      });
     }
   }, [note]);
 
   useEffect(() => {
     if (!note) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (remarkOpen) {
+      if (remarkMode) {
         Keyboard.dismiss();
-        setRemarkOpen(false);
+        setRemarkMode(null);
         return true;
       }
       if (lightbox) {
@@ -85,12 +171,12 @@ export default function NoteViewerScreen({
       return true;
     });
     return () => sub.remove();
-  }, [note, lightbox, remarkOpen, onClose]);
+  }, [note, lightbox, remarkMode, onClose]);
 
   const openRemark = () => {
     if (!note) return;
     setRemarkDraft(note.note ?? '');
-    setRemarkOpen(true);
+    setRemarkMode(note.note?.trim() ? 'view' : 'edit');
   };
 
   const handleDelete = () => {
@@ -111,17 +197,44 @@ export default function NoteViewerScreen({
     ]);
   };
 
+  const openActions = () => {
+    if (!note) return;
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['备注', '删除', '取消'],
+          destructiveButtonIndex: 1,
+          cancelButtonIndex: 2,
+        },
+        (idx) => {
+          if (idx === 0) openRemark();
+          if (idx === 1) handleDelete();
+        },
+      );
+      return;
+    }
+    Alert.alert(note.title ?? 'OffNote', undefined, [
+      { text: '备注', onPress: openRemark },
+      { text: '删除', style: 'destructive', onPress: handleDelete },
+      { text: '取消', style: 'cancel' },
+    ]);
+  };
+
   const closeRemark = () => {
     Keyboard.dismiss();
-    setRemarkOpen(false);
+    setRemarkMode(null);
   };
 
   const handleSaveRemark = async () => {
     if (!note) return;
     Keyboard.dismiss();
     const updated = await updateNote(note.id, { note: remarkDraft });
-    setRemarkOpen(false);
-    if (updated) onUpdated?.(updated);
+    setRemarkMode(null);
+    if (updated) {
+      htmlSyncRef.current = `${updated.id}:${updated.note ?? ''}`;
+      onUpdated?.(updated);
+      webRef.current?.reload();
+    }
   };
 
   const handleMessage = (e: WebViewMessageEvent) => {
@@ -129,6 +242,8 @@ export default function NoteViewerScreen({
       const data = JSON.parse(e.nativeEvent.data ?? '{}');
       if (data?.type === 'lightbox') {
         setLightbox(!!data.open);
+      } else if (data?.type === 'remark') {
+        openRemark();
       }
     } catch {}
   };
@@ -171,7 +286,17 @@ export default function NoteViewerScreen({
             >
               {note?.title ?? note?.author ?? 'OffNote'}
             </Text>
-            <View style={styles.barIconBtn} />
+            <Pressable
+              onPress={openActions}
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.barIconBtn,
+                pressed && styles.barIconBtnPressed,
+              ]}
+              accessibilityLabel="更多操作"
+            >
+              <Ionicons name="ellipsis-horizontal" size={24} color={theme.text} />
+            </Pressable>
             <View
               style={[
                 styles.barShadow,
@@ -188,56 +313,20 @@ export default function NoteViewerScreen({
             originWhitelist={['*']}
             allowFileAccess
             allowingReadAccessToURL={note.dirUri}
+            allowsFullscreenVideo
             allowsInlineMediaPlayback
             mediaPlaybackRequiresUserAction={false}
             javaScriptEnabled
+            injectedJavaScript={remarkInjectJs}
+            onLoadEnd={() => {
+              webRef.current?.injectJavaScript(remarkInjectJs);
+            }}
             onMessage={handleMessage}
             style={[styles.webview, { backgroundColor: containerBg }]}
           />
         )}
 
-        {note && !lightbox && !remarkOpen && (
-          <View
-            style={[
-              styles.toolbar,
-              { backgroundColor: theme.bg, borderTopColor: barBorder },
-            ]}
-          >
-            <Pressable
-              onPress={openRemark}
-              style={({ pressed }) => [
-                styles.toolBtn,
-                pressed && styles.toolBtnPressed,
-              ]}
-              android_ripple={{ color: 'rgba(127,127,127,0.18)' }}
-            >
-              <View>
-                <Ionicons
-                  name={note.note ? 'create' : 'create-outline'}
-                  size={22}
-                  color={note.note ? '#f5b400' : theme.text}
-                />
-                {note.note ? <View style={styles.toolDot} /> : null}
-              </View>
-              <Text style={[styles.toolText, { color: theme.text }]}>
-                {note.note ? '查看备注' : '备注'}
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={handleDelete}
-              style={({ pressed }) => [
-                styles.toolBtn,
-                pressed && styles.toolBtnPressed,
-              ]}
-              android_ripple={{ color: 'rgba(226,59,59,0.18)' }}
-            >
-              <Ionicons name="trash-outline" size={22} color="#e23b3b" />
-              <Text style={[styles.toolText, { color: '#e23b3b' }]}>删除</Text>
-            </Pressable>
-          </View>
-        )}
-
-        {note && remarkOpen && (
+        {note && remarkMode && (
           <KeyboardAvoidingView
             style={[
               styles.remarkOverlay,
@@ -256,20 +345,48 @@ export default function NoteViewerScreen({
               <Text style={[styles.remarkTitle, { color: theme.text }]}>
                 备注
               </Text>
-              <Pressable onPress={handleSaveRemark} hitSlop={8}>
-                <Text style={styles.remarkSave}>保存</Text>
+              <Pressable
+                onPress={
+                  remarkMode === 'view'
+                    ? () => {
+                        setRemarkDraft(note.note ?? '');
+                        setRemarkMode('edit');
+                      }
+                    : handleSaveRemark
+                }
+                hitSlop={8}
+              >
+                <Text style={styles.remarkSave}>
+                  {remarkMode === 'view' ? '编辑' : '保存'}
+                </Text>
               </Pressable>
             </View>
-            <TextInput
-              style={[styles.remarkInput, { color: theme.text }]}
-              value={remarkDraft}
-              onChangeText={setRemarkDraft}
-              placeholder="写点备注…（想法、用途、灵感）"
-              placeholderTextColor={isDark ? '#666' : '#999'}
-              multiline
-              autoFocus
-              textAlignVertical="top"
-            />
+            {remarkMode === 'view' ? (
+              <ScrollView
+                style={styles.remarkReadScroll}
+                contentContainerStyle={styles.remarkReadContent}
+              >
+                <Text
+                  style={[
+                    styles.remarkReadText,
+                    { color: note.note?.trim() ? theme.text : isDark ? '#777' : '#999' },
+                  ]}
+                >
+                  {note.note?.trim() || '还没有备注'}
+                </Text>
+              </ScrollView>
+            ) : (
+              <TextInput
+                style={[styles.remarkInput, { color: theme.text }]}
+                value={remarkDraft}
+                onChangeText={setRemarkDraft}
+                placeholder="写点备注…（想法、用途、灵感）"
+                placeholderTextColor={isDark ? '#666' : '#999'}
+                multiline
+                autoFocus
+                textAlignVertical="top"
+              />
+            )}
           </KeyboardAvoidingView>
         )}
       </SafeAreaView>
@@ -313,34 +430,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
   },
   webview: { flex: 1 },
-  toolbar: {
-    flexDirection: 'row',
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  toolBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-  },
-  toolBtnPressed: {
-    backgroundColor: 'rgba(127,127,127,0.12)',
-  },
-  toolText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  toolDot: {
-    position: 'absolute',
-    top: -2,
-    right: -3,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#f5b400',
-  },
   remarkOverlay: {
     position: 'absolute',
     top: 0,
@@ -368,6 +457,16 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#1f6feb',
+  },
+  remarkReadScroll: {
+    flex: 1,
+  },
+  remarkReadContent: {
+    padding: 20,
+  },
+  remarkReadText: {
+    fontSize: 16,
+    lineHeight: 25,
   },
   remarkInput: {
     flex: 1,

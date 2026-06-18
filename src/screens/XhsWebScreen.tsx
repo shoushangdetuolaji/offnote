@@ -337,6 +337,7 @@ export default function XhsWebScreen({ visible, sourceUrl, onClose }: Props) {
     }
 
     const titleOnly = finalName.replace(/\.[A-Za-z0-9]+$/, '');
+    const finalSourceUrl = sourceUrl ?? '';
     const result = await createNote({
       title: titleOnly,
       note,
@@ -344,7 +345,7 @@ export default function XhsWebScreen({ visible, sourceUrl, onClose }: Props) {
       source: 'rednote',
       items,
       metadata: {
-        sourceUrl: sourceUrl ?? undefined,
+        sourceUrl: finalSourceUrl,
         shortcode: null,
         author: payload.author,
         caption: payload.desc || payload.title,
