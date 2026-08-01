@@ -147,6 +147,7 @@ export async function importBackup(
           continue;
         }
         entry.copy(target);
+        await rewriteNotePaths(new Directory(destRoot, id));
         added += 1;
       }
     }
@@ -156,6 +157,24 @@ export async function importBackup(
     try {
       workDir.delete();
     } catch {}
+  }
+}
+
+/**
+ * meta.json 里的 dirUri / indexUri 是导出设备的绝对路径，换设备（或重装导致
+ * 沙盒路径变化）后会失效。恢复时按本机实际路径重写，index.html 用的是相对
+ * 文件名，无需处理。
+ */
+async function rewriteNotePaths(dir: Directory): Promise<void> {
+  const metaFile = new File(dir, 'meta.json');
+  if (!metaFile.exists) return;
+  try {
+    const note = JSON.parse(await metaFile.text());
+    note.dirUri = dir.uri;
+    note.indexUri = new File(dir, 'index.html').uri;
+    metaFile.write(JSON.stringify(note, null, 2), { encoding: 'utf8' });
+  } catch {
+    // 单条损坏不影响其他笔记恢复
   }
 }
 

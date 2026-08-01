@@ -194,6 +194,21 @@ export async function listNotes(): Promise<Note[]> {
     try {
       const raw = await metaFile.text();
       const parsed = JSON.parse(raw) as Note;
+
+      // dirUri/indexUri 是绝对路径，换设备或重装后沙盒路径会变，
+      // 这里按本机实际路径自愈，避免缩略图和 WebView 加载失败。
+      const dirUri = entry.uri;
+      const indexUri = new File(entry, 'index.html').uri;
+      if (parsed.dirUri !== dirUri || parsed.indexUri !== indexUri) {
+        parsed.dirUri = dirUri;
+        parsed.indexUri = indexUri;
+        try {
+          metaFile.write(JSON.stringify(parsed, null, 2), { encoding: 'utf8' });
+        } catch {
+          // 写回失败不影响本次读取
+        }
+      }
+
       notes.push(parsed);
     } catch {
       // ignore
