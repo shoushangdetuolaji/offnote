@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import {
   Image,
@@ -14,7 +15,7 @@ import {
 
 import type { Category } from '../lib/categories';
 import type { IgMetadata } from '../lib/metadata';
-import TagPicker from './TagPicker';
+import TagSelectSheet from './TagSelectSheet';
 
 type Props = {
   visible: boolean;
@@ -50,6 +51,7 @@ export default function RenameModal({
   const [note, setNote] = useState('');
   const [categoryId, setCategoryId] = useState<string | undefined>(undefined);
   const [tags, setTags] = useState<string[]>([]);
+  const [tagSheet, setTagSheet] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -153,8 +155,26 @@ export default function RenameModal({
               </>
             )}
 
-            <Text style={[styles.label, styles.labelSpaced]}>标签（可多选）</Text>
-            <TagPicker selected={tags} onChange={setTags} />
+            <Text style={[styles.label, styles.labelSpaced]}>标签</Text>
+            <Pressable
+              onPress={() => setTagSheet(true)}
+              style={({ pressed }) => [styles.tagEntry, pressed && styles.tagEntryPressed]}
+            >
+              {tags.length ? (
+                <View style={styles.tagChips}>
+                  {tags.map((t) => (
+                    <View key={t} style={styles.tagChip}>
+                      <Text style={styles.tagChipText} numberOfLines={1}>
+                        #{t}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.tagPlaceholder}>选择标签</Text>
+              )}
+              <Ionicons name="chevron-forward" size={18} color="#bbb" />
+            </Pressable>
 
             <View style={styles.actions}>
               <Pressable onPress={onCancel} style={[styles.btn, styles.btnGhost]}>
@@ -167,6 +187,16 @@ export default function RenameModal({
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
+
+      <TagSelectSheet
+        visible={tagSheet}
+        initial={tags}
+        onCancel={() => setTagSheet(false)}
+        onDone={(next) => {
+          setTags(next);
+          setTagSheet(false);
+        }}
+      />
     </Modal>
   );
 }
@@ -283,6 +313,28 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
+  tagEntry: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  tagEntryPressed: { backgroundColor: '#f7f7f7' },
+  tagChips: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  tagChip: {
+    backgroundColor: '#eef4ff',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    maxWidth: 160,
+  },
+  tagChipText: { fontSize: 13, color: '#1f6feb' },
+  tagPlaceholder: { flex: 1, fontSize: 14, color: '#aaa' },
   textArea: {
     minHeight: 64,
     borderWidth: 1,

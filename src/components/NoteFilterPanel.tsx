@@ -4,7 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { tagKey } from '../lib/tags';
 
 export type NoteFilter = {
-  source: 'all' | 'instagram' | 'rednote';
+  source: 'all' | 'instagram' | 'rednote' | 'douyin';
   sort: 'newest' | 'oldest';
   /** 命中任一标签即显示；空数组 = 不限 */
   tags: string[];
@@ -28,6 +28,7 @@ const SOURCE_OPTIONS: Array<{ key: NoteFilter['source']; label: string }> = [
   { key: 'all', label: '不限' },
   { key: 'instagram', label: 'IG' },
   { key: 'rednote', label: '小红书' },
+  { key: 'douyin', label: '抖音' },
 ];
 
 const SORT_OPTIONS: Array<{ key: NoteFilter['sort']; label: string }> = [

@@ -15,6 +15,7 @@ export type ParsedImportLinks = {
 const LABELS: Record<NoteSource, string> = {
   rednote: '小红书',
   instagram: 'Instagram',
+  douyin: '抖音',
 };
 
 function normalizeUrl(url: string): string {

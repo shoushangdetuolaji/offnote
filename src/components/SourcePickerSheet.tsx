@@ -23,7 +23,9 @@ type Row = {
   source: NoteSource;
   label: string;
   hint: string;
-  icon: ReturnType<typeof require>;
+  /** 图片图标；没有素材时用 Ionicons 兜底 */
+  icon?: ReturnType<typeof require>;
+  ionicon?: keyof typeof Ionicons.glyphMap;
   ratio: number;
 };
 
@@ -33,6 +35,13 @@ const SOURCES: Row[] = [
     label: '小红书',
     hint: '粘贴小红书链接直接导入',
     icon: require('../../assets/rednote.webp'),
+    ratio: 1,
+  },
+  {
+    source: 'douyin',
+    label: '抖音',
+    hint: '粘贴抖音分享文本，在页面里保存视频/图文',
+    ionicon: 'logo-tiktok',
     ratio: 1,
   },
   {
@@ -73,14 +82,22 @@ export default function SourcePickerSheet({ visible, onPick, onDismiss }: Props)
               android_ripple={{ color: '#eee' }}
             >
               <View style={styles.iconBox}>
-                <Image
-                  source={row.icon}
-                  style={{
-                    height: ICON_HEIGHT,
-                    width: ICON_HEIGHT * row.ratio,
-                  }}
-                  resizeMode="contain"
-                />
+                {row.icon ? (
+                  <Image
+                    source={row.icon}
+                    style={{
+                      height: ICON_HEIGHT,
+                      width: ICON_HEIGHT * row.ratio,
+                    }}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <Ionicons
+                    name={row.ionicon ?? 'link-outline'}
+                    size={ICON_HEIGHT - 4}
+                    color="#111"
+                  />
+                )}
               </View>
               <View style={styles.body}>
                 <Text style={styles.label} numberOfLines={1}>

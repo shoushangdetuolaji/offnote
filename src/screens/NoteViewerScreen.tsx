@@ -6,6 +6,7 @@ import {
   BackHandler,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -24,7 +25,8 @@ import {
 import { WebView } from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview';
 
-import TagPicker from '../components/TagPicker';
+import TagSelectList from '../components/TagSelectList';
+import { openOriginal } from '../lib/openOriginal';
 import {
   deleteNote,
   HTML_VERSION,
@@ -134,6 +136,18 @@ export default function NoteViewerScreen({
     } else {
       wrap.appendChild(remark);
     }
+  }
+
+  // 「查看原帖」交给 App 处理：直接唤起小红书/抖音/Instagram，而不是先开浏览器
+  var src = document.querySelector('a.source');
+  if (src && !src.getAttribute('data-offnote-bound')) {
+    src.setAttribute('data-offnote-bound', '1');
+    src.addEventListener('click', function (e) {
+      e.preventDefault();
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'source' }));
+      } catch (err) {}
+    });
   }
 
   remark.classList.toggle('remark-empty', !hasText);
@@ -294,6 +308,8 @@ true;
         setLightbox(!!data.open);
       } else if (data?.type === 'remark') {
         openRemark();
+      } else if (data?.type === 'source' && note) {
+        openOriginal(note);
       }
     } catch {}
   };
@@ -371,6 +387,17 @@ true;
               webRef.current?.injectJavaScript(remarkInjectJs);
             }}
             onMessage={handleMessage}
+            setSupportMultipleWindows={false}
+            onShouldStartLoadWithRequest={(req) => {
+              // 本地 index.html 正常加载；外链不在 WebView 里打开
+              if (!/^https?:/i.test(req.url)) return true;
+              if (note?.sourceUrl && req.url === note.sourceUrl) {
+                openOriginal(note);
+              } else {
+                Linking.openURL(req.url).catch(() => {});
+              }
+              return false;
+            }}
             style={[styles.webview, { backgroundColor: containerBg }]}
           />
         )}
@@ -462,17 +489,11 @@ true;
                 <Text style={styles.remarkSave}>保存</Text>
               </Pressable>
             </View>
-            <ScrollView
-              style={styles.remarkReadScroll}
-              contentContainerStyle={styles.remarkReadContent}
-              keyboardShouldPersistTaps="handled"
-            >
-              <TagPicker
-                selected={tagDraft}
-                onChange={setTagDraft}
-                dark={isDark}
-              />
-            </ScrollView>
+            <TagSelectList
+              selected={tagDraft}
+              onChange={setTagDraft}
+              dark={isDark}
+            />
           </KeyboardAvoidingView>
         )}
       </SafeAreaView>

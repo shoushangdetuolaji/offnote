@@ -35,6 +35,7 @@ import {
 import { extractSupportedUrl, isRednoteUrl } from '../lib/url';
 import { saveXhsFromUrl } from '../lib/xhs';
 import CobaltWebScreen from './CobaltWebScreen';
+import DouyinWebScreen from './DouyinWebScreen';
 import NoteViewerScreen from './NoteViewerScreen';
 import XhsWebScreen from './XhsWebScreen';
 
@@ -57,6 +58,9 @@ export default function HomeScreen() {
   const [bulkMoveVisible, setBulkMoveVisible] = useState(false);
   const [sourcePickerVisible, setSourcePickerVisible] = useState(false);
   const [xhsPasteVisible, setXhsPasteVisible] = useState(false);
+  const [douyinVisible, setDouyinVisible] = useState(false);
+  const [douyinSourceUrl, setDouyinSourceUrl] = useState<string | null>(null);
+  const [douyinPasteVisible, setDouyinPasteVisible] = useState(false);
   const [busyMsg, setBusyMsg] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectionMode = selectedIds.size > 0;
@@ -146,6 +150,16 @@ export default function HomeScreen() {
   );
 
   const openForUrl = (url: string | null, source: NoteSource | null) => {
+    if (source === 'douyin') {
+      // 抖音直接走 WebView：页面加载完点「保存」
+      if (url) {
+        setDouyinSourceUrl(url);
+        setDouyinVisible(true);
+      } else {
+        setDouyinPasteVisible(true);
+      }
+      return;
+    }
     if (source === 'rednote') {
       if (url) {
         tryImportXhs(url);
@@ -451,7 +465,13 @@ export default function HomeScreen() {
       {pendingUrl && (
         <View style={styles.banner}>
           <Text style={styles.bannerTitle}>
-            剪贴板里有{pendingSource === 'rednote' ? ' 小红书 ' : ' Instagram '}链接
+            剪贴板里有
+            {pendingSource === 'rednote'
+              ? ' 小红书 '
+              : pendingSource === 'douyin'
+                ? ' 抖音 '
+                : ' Instagram '}
+            链接
           </Text>
           <Text style={styles.bannerUrl} numberOfLines={1}>
             {pendingUrl}
@@ -530,6 +550,15 @@ export default function HomeScreen() {
         }}
       />
 
+      <DouyinWebScreen
+        visible={douyinVisible}
+        sourceUrl={douyinSourceUrl}
+        onClose={async () => {
+          setDouyinVisible(false);
+          await reloadAll();
+        }}
+      />
+
       <NoteViewerScreen
         note={activeNote}
         onClose={() => setActiveNote(null)}
@@ -582,6 +611,22 @@ export default function HomeScreen() {
           if (!hit || hit.source !== 'rednote') return;
           setXhsPasteVisible(false);
           tryImportXhs(hit.url);
+        }}
+      />
+
+      <PasteUrlModal
+        visible={douyinPasteVisible}
+        title="粘贴抖音链接"
+        placeholder="支持抖音 App 分享文本或 v.douyin.com 链接"
+        validate={(t) => extractSupportedUrl(t)?.source === 'douyin'}
+        errorText="未识别到抖音链接"
+        onCancel={() => setDouyinPasteVisible(false)}
+        onConfirm={(text) => {
+          const hit = extractSupportedUrl(text);
+          if (!hit || hit.source !== 'douyin') return;
+          setDouyinPasteVisible(false);
+          setDouyinSourceUrl(hit.url);
+          setDouyinVisible(true);
         }}
       />
 

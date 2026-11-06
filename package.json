@@ -24,6 +24,7 @@
     "expo-sharing": "~58.0.22",
     "expo-splash-screen": "~58.0.13",
     "expo-status-bar": "~58.0.4",
+    "pinyin-pro": "^3.29.5",
     "react": "19.3.0",
     "react-native": "0.88.1",
     "react-native-gesture-handler": "~3.3.0",

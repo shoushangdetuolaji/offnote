@@ -49,12 +49,33 @@ function formatDay(ts: number): string {
 const TOPIC_RE = /#([^#\n\[\]]{1,40}?)\[话题\]#/g;
 
 /** 正文：保留换行，把 #xxx[话题]# 渲染成蓝色话题 */
-function xhsText(text: string): { html: string; topics: string[] } {
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 小红书 `#xxx[话题]#` 直接识别；抖音等平台的 `#xxx` 只在 knownTopics 里出现时才高亮，
+ * 避免把普通的 # 号误判成话题。
+ */
+function xhsText(
+  text: string,
+  knownTopics: string[] = [],
+): { html: string; topics: string[] } {
   const topics: string[] = [];
-  const html = escape(text.trim()).replace(TOPIC_RE, (_m, name: string) => {
+  let html = escape(text.trim()).replace(TOPIC_RE, (_m, name: string) => {
     topics.push(name.trim());
     return `<span class="x-topic">#${name.trim()}</span>`;
   });
+  const rest = knownTopics
+    .filter((t) => t && !topics.includes(t))
+    .sort((a, b) => b.length - a.length);
+  if (rest.length) {
+    const re = new RegExp(`#\\s?(${rest.map((t) => escapeRegExp(escape(t))).join('|')})`, 'g');
+    html = html.replace(re, (_m, name: string) => {
+      if (!topics.includes(name)) topics.push(name);
+      return `<span class="x-topic">#${name}</span>`;
+    });
+  }
   return { html, topics };
 }
 
@@ -110,7 +131,7 @@ function xhsContentHtml(input: RenderInput): string {
   const xhs = input.xhs;
   const desc = xhs?.desc ?? input.caption ?? '';
   const title = xhs?.title && xhs.title !== desc.trim() ? xhs.title : '';
-  const body = xhsText(desc);
+  const body = xhsText(desc, xhs?.topics);
 
   const seen = new Set(body.topics);
   const extraTopics = (xhs?.topics ?? []).filter((t) => !seen.has(t));
@@ -283,7 +304,9 @@ export function renderNoteHtml(input: RenderInput): string {
   const title = input.title ?? (author ? `@${author}` : 'OffNote');
   const dateStr = formatDate(input.createdAt);
   const total = input.media.length;
-  const isXhs = input.source === 'rednote';
+  // 小红书和抖音共用这套「网页版」布局；评论区只有小红书有
+  const isXhs = input.source === 'rednote' || input.source === 'douyin';
+  const hasComments = input.source === 'rednote';
 
   const mediaBlock = total > 1 ? carouselHtml(input) : singleMediaHtml(input);
 
@@ -501,7 +524,7 @@ export function renderNoteHtml(input: RenderInput): string {
       ${sourceLine}
     </div>
     ${remarkBlock}
-    ${isXhs ? xhsCommentsHtml(input.xhs) : ''}
+    ${hasComments ? xhsCommentsHtml(input.xhs) : ''}
   </div>
 
   <div id="lb" role="dialog" aria-modal="true" aria-hidden="true">

@@ -109,3 +109,39 @@ export async function mergeTags(incoming: Array<Tag | string>): Promise<void> {
   }
   if (changed) await saveAll(all);
 }
+
+/**
+ * 标签库改名。新名字已存在时视为合并：删掉旧条目，最近使用时间取两者较大值。
+ * 笔记上的标签由 lib/notes 的 renameTagOnNotes 负责改。
+ */
+export async function renameTagInLibrary(
+  oldName: string,
+  newName: string,
+): Promise<void> {
+  const name = cleanTagName(newName);
+  if (!name) return;
+  const all = await readAll();
+  const oldKey = tagKey(oldName);
+  const old = all.find((t) => tagKey(t.name) === oldKey);
+  const target = all.find(
+    (t) => tagKey(t.name) === tagKey(name) && tagKey(t.name) !== oldKey,
+  );
+  let next: Tag[];
+  if (target) {
+    target.lastUsedAt = Math.max(target.lastUsedAt, old?.lastUsedAt ?? 0);
+    next = all.filter((t) => tagKey(t.name) !== oldKey);
+  } else if (old) {
+    old.name = name;
+    next = all;
+  } else {
+    const now = Date.now();
+    next = [...all, { name, createdAt: now, lastUsedAt: now }];
+  }
+  await saveAll(next);
+}
+
+export async function removeTagFromLibrary(name: string): Promise<void> {
+  const key = tagKey(name);
+  const all = await readAll();
+  await saveAll(all.filter((t) => tagKey(t.name) !== key));
+}

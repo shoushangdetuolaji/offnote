@@ -36,6 +36,7 @@ export async function computeStorageStats(): Promise<StorageStats> {
     bySource: {
       instagram: { count: 0, bytes: 0 },
       rednote: { count: 0, bytes: 0 },
+      douyin: { count: 0, bytes: 0 },
       unknown: { count: 0, bytes: 0 },
     },
   };
@@ -47,7 +48,8 @@ export async function computeStorageStats(): Promise<StorageStats> {
       else if (kind === 'image') stats.imageBytes += bytes;
       else stats.metadataBytes += bytes;
     });
-    const key: NoteSource | 'unknown' = note.source ?? 'unknown';
+    const key: NoteSource | 'unknown' =
+      note.source && note.source in stats.bySource ? note.source : 'unknown';
     stats.bySource[key].count += 1;
     stats.bySource[key].bytes += noteBytes;
   }
@@ -60,10 +62,18 @@ async function sumNoteBytes(
   onFile: (kind: 'video' | 'image' | 'other', bytes: number) => void,
 ): Promise<number> {
   try {
-    const dir = new Directory(note.dirUri);
-    if (!dir.exists) return 0;
+    const root = new Directory(note.dirUri);
+    if (!root.exists) return 0;
     let total = 0;
-    const entries = dir.list();
+    // 包含子目录（xhs/ 下的头像和评论图片）
+    const entries: Array<File | Directory> = [];
+    const stack: Directory[] = [root];
+    while (stack.length) {
+      for (const e of stack.pop()!.list()) {
+        if (e instanceof Directory) stack.push(e);
+        else entries.push(e);
+      }
+    }
     for (const entry of entries) {
       if (!(entry instanceof File)) continue;
       const bytes = sizeOf(entry);

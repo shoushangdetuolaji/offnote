@@ -4,7 +4,7 @@ import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import type { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 
-import type { Note } from '../lib/notes';
+import { notePublishInfo, type Note } from '../lib/notes';
 
 type Props = {
   note: Note;
@@ -37,12 +37,16 @@ export default function NoteCard({
     if (note.source === 'rednote') {
       return { label: 'RED', bg: '#fe2c55', color: '#fff' };
     }
+    if (note.source === 'douyin') {
+      return { label: '抖音', bg: '#161823', color: '#fff' };
+    }
     if (note.source === 'instagram') {
       return { label: 'IG', bg: '#e1306c', color: '#fff' };
     }
     return null;
   })();
 
+  const publish = notePublishInfo(note);
   const bodyText = note.caption?.trim();
   const remark = note.note?.trim();
 
@@ -147,8 +151,8 @@ export default function NoteCard({
           </Text>
         ) : null}
         <Text style={styles.cardMeta}>
-          {formatDate(note.xhs?.publishTime ?? note.createdAt)}
-          {note.xhs?.publishTime && note.xhs.ipLocation
+          {formatDate(publish.time, publish.dateOnly)}
+          {publish.isPublish && note.xhs?.ipLocation
             ? `  ${note.xhs.ipLocation}`
             : ''}
         </Text>
@@ -193,10 +197,11 @@ export default function NoteCard({
   );
 }
 
-function formatDate(ts: number): string {
+function formatDate(ts: number, dateOnly = false): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return dateOnly ? day : `${day} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const styles = StyleSheet.create({

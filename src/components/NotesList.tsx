@@ -12,7 +12,12 @@ import {
 } from 'react-native';
 
 import type { Category } from '../lib/categories';
-import { deleteNote, updateNote, type Note } from '../lib/notes';
+import {
+  deleteNote,
+  notePublishInfo,
+  updateNote,
+  type Note,
+} from '../lib/notes';
 import { listTags, tagKey } from '../lib/tags';
 import MoveToCategorySheet from './MoveToCategorySheet';
 import NoteFilterPanel, {
@@ -131,7 +136,7 @@ export default function NotesList({
     if (enableFilter) {
       // 按发布时间排；没有发布时间的（老笔记 / IG）用保存时间
       const dir = filter.sort === 'oldest' ? 1 : -1;
-      const ts = (n: Note) => n.xhs?.publishTime ?? n.createdAt;
+      const ts = (n: Note) => notePublishInfo(n).time;
       result.sort((a, b) => (ts(a) - ts(b)) * dir);
     }
     return result;

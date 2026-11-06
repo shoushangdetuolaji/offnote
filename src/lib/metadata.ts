@@ -4,7 +4,36 @@ export type IgMetadata = {
   author?: string;
   caption?: string;
   thumbnailUrl?: string;
+  /** 发布日期（本地零点的毫秒时间戳），IG 只给到日期 */
+  publishTime?: number;
 };
+
+const MONTHS: Record<string, number> = {
+  january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+};
+
+/**
+ * 从 IG 的描述文案里解析发布日期：
+ *   "12 likes, 3 comments - user on October 19, 2026: \"...\""
+ *   中文页面："user 于 2026年10月19日：..."
+ * Hermes 不支持 new Date('October 19, 2026') 这种格式，这里手动解析。
+ */
+export function parseIgDate(text?: string | null): number | undefined {
+  if (!text) return undefined;
+  const en = text.match(/\bon\s+([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})/);
+  if (en) {
+    const month = MONTHS[en[1].toLowerCase()];
+    if (month !== undefined) {
+      return new Date(Number(en[3]), month, Number(en[2])).getTime();
+    }
+  }
+  const zh = text.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  if (zh) {
+    return new Date(Number(zh[1]), Number(zh[2]) - 1, Number(zh[3])).getTime();
+  }
+  return undefined;
+}
 
 const UA = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
 
@@ -88,6 +117,7 @@ export async function fetchIgMetadata(sourceUrl: string): Promise<IgMetadata> {
       author,
       caption: parsedTitle.caption ?? (ogDesc?.trim() || undefined),
       thumbnailUrl: ogImage ?? undefined,
+      publishTime: parseIgDate(ogDesc) ?? parseIgDate(ogTitle),
     };
   } catch {
     return fallback;

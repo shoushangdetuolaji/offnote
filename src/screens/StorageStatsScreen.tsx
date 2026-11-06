@@ -98,6 +98,13 @@ export default function StorageStatsScreen() {
             count={stats.bySource.rednote.count}
             bytes={stats.bySource.rednote.bytes}
           />
+          <SourceRow
+            label="抖音"
+            badge="抖音"
+            badgeBg="#161823"
+            count={stats.bySource.douyin.count}
+            bytes={stats.bySource.douyin.bytes}
+          />
           {stats.bySource.unknown.count > 0 && (
             <SourceRow
               label="其他"

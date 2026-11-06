@@ -2,8 +2,9 @@ import { Directory, File, Paths } from 'expo-file-system';
 
 import { renderNoteHtml } from './html';
 import type { IgMetadata } from './metadata';
-import { normalizeTags, touchTags } from './tags';
+import { normalizeTags, tagKey, touchTags } from './tags';
 import { downloadXhsExtra, type XhsExtra } from './xhsExtra';
+import { parseIgDate } from './metadata';
 
 /** 详情页 HTML 模板版本；升级后打开老笔记会自动重新渲染 */
 export const HTML_VERSION = 2;
@@ -15,7 +16,7 @@ export type NoteMedia = {
   kind: MediaKind;
 };
 
-export type NoteSource = 'instagram' | 'rednote';
+export type NoteSource = 'instagram' | 'rednote' | 'douyin';
 
 export type Note = {
   id: string;
@@ -35,8 +36,10 @@ export type Note = {
   sourceUrl?: string;
   media: NoteMedia[];
   thumbnailFilename?: string;
-  /** 小红书附加信息（话题、发布时间、评论等），图片为笔记目录内相对路径 */
+  /** 小红书/抖音附加信息（话题、发布时间、互动数、评论等），图片为笔记目录内相对路径 */
   xhs?: XhsExtra;
+  /** 原帖发布时间（IG 只有日期）；小红书/抖音的在 xhs.publishTime */
+  publishedAt?: number;
   /** 生成 index.html 时的模板版本，见 HTML_VERSION */
   htmlVersion?: number;
   dirUri: string;
@@ -69,7 +72,7 @@ function extOf(name: string, fallback: string): string {
 }
 
 export type MediaSource =
-  | { type: 'remote'; url: string }
+  | { type: 'remote'; url: string; headers?: Record<string, string> }
   | { type: 'base64'; data: string };
 
 export type MediaInput = {
@@ -120,11 +123,14 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     const ext = extOf(item.hintExt, item.kind === 'image' ? 'jpg' : 'mp4');
     const filename = total === 1 ? `media.${ext}` : `media-${i + 1}.${ext}`;
     const file = new File(dir, filename);
+    // 先报一次「开始第 i 项」：有的 CDN 不返回大小，字节进度回调不会触发
+    input.onItemProgress?.(i, total, 0);
 
     try {
       if (item.source.type === 'remote') {
         if (file.exists) file.delete();
         const task = File.createDownloadTask(item.source.url, file, {
+          headers: item.source.headers,
           onProgress: ({ bytesWritten, totalBytes }) => {
             const t = totalBytes || 0;
             const fraction = t > 0 ? (bytesWritten || 0) / t : 0;
@@ -184,6 +190,7 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     media: stored,
     thumbnailFilename,
     xhs,
+    publishedAt: input.metadata?.publishTime,
     htmlVersion: HTML_VERSION,
     dirUri: dir.uri,
     indexUri: new File(dir, 'index.html').uri,
@@ -317,6 +324,65 @@ export async function updateNote(
   }
 
   return merged;
+}
+
+export type PublishInfo = {
+  time: number;
+  /** 只有日期没有时刻（IG） */
+  dateOnly: boolean;
+  /** false 表示拿不到发布时间，退回用保存时间 */
+  isPublish: boolean;
+};
+
+/**
+ * 卡片展示和排序用的时间：发布时间优先，拿不到再用保存时间。
+ * 老 IG 笔记没存 publishedAt，从标题/作者/文案里的 "on October 19, 2026" 现解析。
+ */
+export function notePublishInfo(note: Note): PublishInfo {
+  if (note.xhs?.publishTime) {
+    return { time: note.xhs.publishTime, dateOnly: false, isPublish: true };
+  }
+  if (note.publishedAt) {
+    return { time: note.publishedAt, dateOnly: true, isPublish: true };
+  }
+  if (note.source === 'instagram' || !note.source) {
+    const parsed =
+      parseIgDate(note.caption) ?? parseIgDate(note.title) ?? parseIgDate(note.author);
+    if (parsed) return { time: parsed, dateOnly: true, isPublish: true };
+  }
+  return { time: note.createdAt, dateOnly: false, isPublish: false };
+}
+
+function writeMetaOnly(note: Note): void {
+  const metaFile = new File(new Directory(rootDir(), note.id), 'meta.json');
+  if (metaFile.exists) {
+    metaFile.writeSync(JSON.stringify(note, null, 2), { encoding: 'utf8' });
+  }
+}
+
+/**
+ * 所有笔记上的标签改名（newName 为 null 表示删除）。
+ * 标签不进 index.html，只改 meta.json 即可。返回受影响的笔记数。
+ */
+export async function renameTagOnNotes(
+  oldName: string,
+  newName: string | null,
+): Promise<number> {
+  const oldKey = tagKey(oldName);
+  const notes = await listNotes();
+  let count = 0;
+  for (const n of notes) {
+    if (!n.tags?.some((t) => tagKey(t) === oldKey)) continue;
+    const replaced = n.tags.flatMap((t) =>
+      tagKey(t) === oldKey ? (newName ? [newName] : []) : [t],
+    );
+    const tags = normalizeTags(replaced);
+    try {
+      writeMetaOnly({ ...n, tags: tags.length ? tags : undefined });
+      count++;
+    } catch {}
+  }
+  return count;
 }
 
 /** 用最新模板重新生成 index.html（老笔记升级样式用） */

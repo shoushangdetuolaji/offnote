@@ -7,6 +7,15 @@ const REDNOTE_HOSTS = [
   'xhslink.com',
 ];
 
+const DOUYIN_HOSTS = [
+  'douyin.com',
+  'www.douyin.com',
+  'v.douyin.com',
+  'm.douyin.com',
+  'iesdouyin.com',
+  'www.iesdouyin.com',
+];
+
 export function extractFirstUrl(text: string): string | null {
   if (!text) return null;
   const match = text.match(/https?:\/\/[^\s"'<>]+/i);
@@ -31,9 +40,15 @@ export function isRednoteUrl(url: string): boolean {
   return !!h && REDNOTE_HOSTS.includes(h);
 }
 
+export function isDouyinUrl(url: string): boolean {
+  const h = hostnameOf(url);
+  return !!h && DOUYIN_HOSTS.includes(h);
+}
+
 export function detectSource(url: string): NoteSource | null {
   if (isInstagramUrl(url)) return 'instagram';
   if (isRednoteUrl(url)) return 'rednote';
+  if (isDouyinUrl(url)) return 'douyin';
   return null;
 }
 
