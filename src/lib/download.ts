@@ -32,7 +32,7 @@ export async function saveBase64(
     const dir = ensureOffNoteDir();
     const file = new File(dir, filename);
     file.create({ overwrite: true });
-    file.write(base64, { encoding: 'base64' });
+    file.writeSync(base64, { encoding: 'base64' });
     return { ok: true, localUri: file.uri };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? '保存异常' };

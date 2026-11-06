@@ -1,4 +1,5 @@
 import { createNote, type CreateNoteResult, type MediaInput } from './notes';
+import { buildXhsExtra, findCommentList, type XhsExtra } from './xhsExtra';
 
 /**
  * Small-Red-Book (xiaohongshu) note parser.
@@ -25,6 +26,7 @@ export type XhsParseResult =
         images: string[];
         videoUrl?: string;
         finalUrl: string;
+        extra?: XhsExtra;
       };
     }
   | { ok: false; reason: 'fetch_failed' | 'no_data' | 'blocked'; detail?: string };
@@ -154,7 +156,7 @@ function extractFromState(state: any): XhsParseResult['ok'] extends true
     images[0],
   );
 
-  return { title, desc, author, authorAvatar, cover, images, videoUrl };
+  return { title, desc, author, authorAvatar, cover, images, videoUrl, note };
 }
 
 function extractFromHtml(html: string): {
@@ -225,7 +227,17 @@ export async function parseXhsUrl(url: string): Promise<XhsParseResult> {
     images: (fromState?.images?.length ? fromState.images : fromHtml.images) ?? [],
     videoUrl: fromState?.videoUrl || fromHtml.videoUrl,
     finalUrl: fetched.finalUrl,
+    extra: undefined as XhsExtra | undefined,
   };
+  try {
+    merged.extra = buildXhsExtra({
+      title: merged.title,
+      desc: merged.desc,
+      authorAvatar: merged.authorAvatar,
+      noteMeta: fromState?.note,
+      rawComments: findCommentList(state) ?? undefined,
+    });
+  } catch {}
 
   if (
     !merged.title &&
@@ -328,9 +340,13 @@ export async function saveXhsFromUrl(
       caption: data.desc || data.title,
       thumbnailUrl: data.cover || data.images[0],
     },
+    xhs: data.extra,
     onItemProgress: (i, total, f) => {
       const overall = ((i + f) / total) * 100;
       opts?.onProgress?.(`保存第 ${i + 1}/${total} 项 ${Math.round(overall)}%`);
+    },
+    onExtraProgress: (done, total) => {
+      opts?.onProgress?.(`保存评论图片 ${done}/${total}`);
     },
   });
 

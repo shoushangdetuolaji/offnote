@@ -14,6 +14,7 @@ import {
 
 import type { Category } from '../lib/categories';
 import type { IgMetadata } from '../lib/metadata';
+import TagPicker from './TagPicker';
 
 type Props = {
   visible: boolean;
@@ -25,7 +26,12 @@ type Props = {
   metadataLoading?: boolean;
   categories?: Category[];
   onCancel: () => void;
-  onConfirm: (name: string, note: string, categoryId?: string) => void;
+  onConfirm: (
+    name: string,
+    note: string,
+    categoryId: string | undefined,
+    tags: string[],
+  ) => void;
 };
 
 export default function RenameModal({
@@ -43,12 +49,14 @@ export default function RenameModal({
   const [name, setName] = useState('');
   const [note, setNote] = useState('');
   const [categoryId, setCategoryId] = useState<string | undefined>(undefined);
+  const [tags, setTags] = useState<string[]>([]);
 
   useEffect(() => {
     if (visible) {
       setName(stripExt(defaultName));
       setNote(defaultNote ?? '');
       setCategoryId(defaultCategoryId);
+      setTags([]);
     }
   }, [visible, defaultName, defaultNote, defaultCategoryId]);
 
@@ -57,7 +65,7 @@ export default function RenameModal({
   const confirm = () => {
     const cleaned = name.trim().replace(/[/\\:?*"<>|]/g, '').slice(0, 80);
     const final = cleaned ? `${cleaned}.${ext}` : defaultName;
-    onConfirm(final, note.trim(), categoryId);
+    onConfirm(final, note.trim(), categoryId, tags);
   };
 
   return (
@@ -144,6 +152,9 @@ export default function RenameModal({
                 </View>
               </>
             )}
+
+            <Text style={[styles.label, styles.labelSpaced]}>标签（可多选）</Text>
+            <TagPicker selected={tags} onChange={setTags} />
 
             <View style={styles.actions}>
               <Pressable onPress={onCancel} style={[styles.btn, styles.btnGhost]}>

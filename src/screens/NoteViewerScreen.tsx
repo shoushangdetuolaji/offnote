@@ -24,7 +24,14 @@ import {
 import { WebView } from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview';
 
-import { deleteNote, updateNote, type Note } from '../lib/notes';
+import TagPicker from '../components/TagPicker';
+import {
+  deleteNote,
+  HTML_VERSION,
+  refreshNoteHtml,
+  updateNote,
+  type Note,
+} from '../lib/notes';
 
 type RemarkMode = 'view' | 'edit' | null;
 
@@ -46,6 +53,8 @@ export default function NoteViewerScreen({
   const [lightbox, setLightbox] = useState(false);
   const [remarkMode, setRemarkMode] = useState<RemarkMode>(null);
   const [remarkDraft, setRemarkDraft] = useState('');
+  const [tagEditing, setTagEditing] = useState(false);
+  const [tagDraft, setTagDraft] = useState<string[]>([]);
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
@@ -141,7 +150,22 @@ true;
       setLightbox(false);
       setRemarkMode(null);
       setRemarkDraft('');
+      setTagEditing(false);
+      setTagDraft([]);
       htmlSyncRef.current = null;
+      return;
+    }
+    // 老笔记用旧模板生成的 index.html，打开时按最新模板重渲染一次
+    if ((note.htmlVersion ?? 1) < HTML_VERSION) {
+      const syncKey = `${note.id}:v${HTML_VERSION}:${note.note ?? ''}`;
+      if (htmlSyncRef.current === syncKey) return;
+      htmlSyncRef.current = syncKey;
+      refreshNoteHtml(note.id).then((updated) => {
+        if (!updated) return;
+        htmlSyncRef.current = `${updated.id}:${updated.note ?? ''}`;
+        webRef.current?.reload();
+        onUpdated?.(updated);
+      });
       return;
     }
     if (note.note?.trim()) {
@@ -158,6 +182,11 @@ true;
   useEffect(() => {
     if (!note) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (tagEditing) {
+        Keyboard.dismiss();
+        setTagEditing(false);
+        return true;
+      }
       if (remarkMode) {
         Keyboard.dismiss();
         setRemarkMode(null);
@@ -171,12 +200,31 @@ true;
       return true;
     });
     return () => sub.remove();
-  }, [note, lightbox, remarkMode, onClose]);
+  }, [note, lightbox, remarkMode, tagEditing, onClose]);
 
   const openRemark = () => {
     if (!note) return;
     setRemarkDraft(note.note ?? '');
     setRemarkMode(note.note?.trim() ? 'view' : 'edit');
+  };
+
+  const openTags = () => {
+    if (!note) return;
+    setTagDraft(note.tags ?? []);
+    setTagEditing(true);
+  };
+
+  const closeTags = () => {
+    Keyboard.dismiss();
+    setTagEditing(false);
+  };
+
+  const handleSaveTags = async () => {
+    if (!note) return;
+    Keyboard.dismiss();
+    const updated = await updateNote(note.id, { tags: tagDraft });
+    setTagEditing(false);
+    if (updated) onUpdated?.(updated);
   };
 
   const handleDelete = () => {
@@ -202,19 +250,21 @@ true;
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          options: ['备注', '删除', '取消'],
-          destructiveButtonIndex: 1,
-          cancelButtonIndex: 2,
+          options: ['备注', '标签', '删除', '取消'],
+          destructiveButtonIndex: 2,
+          cancelButtonIndex: 3,
         },
         (idx) => {
           if (idx === 0) openRemark();
-          if (idx === 1) handleDelete();
+          if (idx === 1) openTags();
+          if (idx === 2) handleDelete();
         },
       );
       return;
     }
     Alert.alert(note.title ?? 'OffNote', undefined, [
       { text: '备注', onPress: openRemark },
+      { text: '标签', onPress: openTags },
       { text: '删除', style: 'destructive', onPress: handleDelete },
       { text: '取消', style: 'cancel' },
     ]);
@@ -264,7 +314,6 @@ true;
       >
         <StatusBar
           barStyle={lightbox ? 'light-content' : theme.statusBarStyle}
-          backgroundColor={containerBg}
           hidden={lightbox}
         />
         {!lightbox && (
@@ -387,6 +436,43 @@ true;
                 textAlignVertical="top"
               />
             )}
+          </KeyboardAvoidingView>
+        )}
+
+        {note && tagEditing && (
+          <KeyboardAvoidingView
+            style={[
+              styles.remarkOverlay,
+              { backgroundColor: theme.bg, paddingTop: insets.top },
+            ]}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <View
+              style={[styles.remarkBar, { borderBottomColor: barBorder }]}
+            >
+              <Pressable onPress={closeTags} hitSlop={8}>
+                <Text style={[styles.remarkCancel, { color: theme.text }]}>
+                  取消
+                </Text>
+              </Pressable>
+              <Text style={[styles.remarkTitle, { color: theme.text }]}>
+                标签
+              </Text>
+              <Pressable onPress={handleSaveTags} hitSlop={8}>
+                <Text style={styles.remarkSave}>保存</Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              style={styles.remarkReadScroll}
+              contentContainerStyle={styles.remarkReadContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <TagPicker
+                selected={tagDraft}
+                onChange={setTagDraft}
+                dark={isDark}
+              />
+            </ScrollView>
           </KeyboardAvoidingView>
         )}
       </SafeAreaView>

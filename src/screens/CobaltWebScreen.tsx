@@ -346,7 +346,8 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
   const handleConfirmName = async (
     finalName: string,
     note: string,
-    categoryId?: string,
+    categoryId: string | undefined,
+    tags: string[],
   ) => {
     setShowRename(false);
     setBusyMsg('正在保存…');
@@ -360,6 +361,7 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
       title: titleOnly,
       note,
       categoryId,
+      tags,
       source: 'instagram',
       items,
       metadata: finalMetadata,
@@ -393,7 +395,7 @@ export default function CobaltWebScreen({ visible, sourceUrl, onClose }: Props) 
       statusBarTranslucent
     >
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+        <StatusBar barStyle="dark-content" />
         <View style={styles.topBar}>
           <Pressable onPress={onClose} style={styles.barBtn}>
             <Text style={styles.barBtnText}>关闭</Text>

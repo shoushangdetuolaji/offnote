@@ -70,6 +70,7 @@ export default function CategoryNotesScreen({ navigation, route }: Props) {
         onRefresh={handleRefresh}
         onChanged={reload}
         onOpenNote={setActiveNote}
+        enableFilter
         emptyTitle="这个分类还没有笔记"
         emptyHint="长按其他笔记 → 移动到这里"
       />

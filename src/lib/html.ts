@@ -1,4 +1,5 @@
-import type { NoteMedia } from './notes';
+import type { NoteMedia, NoteSource } from './notes';
+import type { XhsComment, XhsExtra } from './xhsExtra';
 
 function escape(s: string): string {
   return s
@@ -33,7 +34,172 @@ export type RenderInput = {
   thumbnailFilename?: string;
   sourceUrl?: string;
   createdAt: number;
+  source?: NoteSource;
+  xhs?: XhsExtra;
 };
+
+// ---------- 小红书样式 ----------
+
+function formatDay(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+const TOPIC_RE = /#([^#\n\[\]]{1,40}?)\[话题\]#/g;
+
+/** 正文：保留换行，把 #xxx[话题]# 渲染成蓝色话题 */
+function xhsText(text: string): { html: string; topics: string[] } {
+  const topics: string[] = [];
+  const html = escape(text.trim()).replace(TOPIC_RE, (_m, name: string) => {
+    topics.push(name.trim());
+    return `<span class="x-topic">#${name.trim()}</span>`;
+  });
+  return { html, topics };
+}
+
+function avatarHtml(src: string | undefined, name: string, cls: string): string {
+  if (src) {
+    return `<img class="${cls}" src="${escape(src)}" alt="" loading="lazy">`;
+  }
+  const ch = Array.from(name.trim())[0] ?? '?';
+  return `<span class="${cls} x-avatar-ph">${escape(ch)}</span>`;
+}
+
+const HEART_SVG =
+  '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>';
+
+function commentHtml(c: XhsComment, isReply: boolean): string {
+  const when = c.time ? formatDay(c.time) : c.timeText ?? '';
+  const metaText = [when, c.location].filter(Boolean).join(' ');
+  const likes = c.likes && c.likes !== '0' ? c.likes : '';
+  const pics = c.pictures?.length
+    ? `<div class="x-cpics">${c.pictures
+        .map((u) => `<img src="${escape(u)}" alt="" loading="lazy">`)
+        .join('')}</div>`
+    : '';
+  const replies = c.replies?.length
+    ? `<div class="x-replies">${c.replies.map((r) => commentHtml(r, true)).join('')}</div>`
+    : '';
+  const saved = c.replies?.length ?? 0;
+  const more =
+    !isReply && c.replyCount && c.replyCount > saved
+      ? `<div class="x-cmore">共 ${c.replyCount} 条回复${saved ? `，已保存 ${saved} 条` : '，未保存'}</div>`
+      : '';
+  const replyTo = c.replyTo
+    ? `回复 <span class="x-cto">${escape(c.replyTo)}</span>：`
+    : '';
+  return `<div class="x-c${isReply ? ' x-c-sub' : ''}">
+  ${avatarHtml(c.avatar, c.author, 'x-cavatar')}
+  <div class="x-cbody">
+    <div class="x-cname">${escape(c.author)}${c.isAuthor ? '<span class="x-ctag">作者</span>' : ''}</div>
+    ${c.content ? `<div class="x-ctext">${replyTo}${xhsText(c.content).html}</div>` : ''}
+    ${pics}
+    <div class="x-cmeta"><span>${escape(metaText)}</span>${likes ? `<span class="x-clike">${HEART_SVG}${escape(likes)}</span>` : ''}</div>
+    ${replies}${more}
+  </div>
+</div>`;
+}
+
+function xhsHeaderHtml(author: string, xhs?: XhsExtra): string {
+  if (!author) return '';
+  return `<div class="x-author">${avatarHtml(xhs?.authorAvatar, author, 'x-avatar')}<span class="x-name">${escape(author)}</span></div>`;
+}
+
+function xhsContentHtml(input: RenderInput): string {
+  const xhs = input.xhs;
+  const desc = xhs?.desc ?? input.caption ?? '';
+  const title = xhs?.title && xhs.title !== desc.trim() ? xhs.title : '';
+  const body = xhsText(desc);
+
+  const seen = new Set(body.topics);
+  const extraTopics = (xhs?.topics ?? []).filter((t) => !seen.has(t));
+
+  const dateLine = [
+    xhs?.publishTime ? formatDay(xhs.publishTime) : '',
+    xhs?.ipLocation ?? '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const counts = [
+    xhs?.likedCount ? `赞 ${escape(xhs.likedCount)}` : '',
+    xhs?.collectedCount ? `收藏 ${escape(xhs.collectedCount)}` : '',
+    xhs?.commentCount ? `评论 ${escape(xhs.commentCount)}` : '',
+  ].filter(Boolean);
+
+  return `
+    ${title ? `<h1 class="x-title">${escape(title)}</h1>` : ''}
+    ${body.html ? `<div class="x-desc">${body.html}</div>` : ''}
+    ${extraTopics.length ? `<div class="x-desc x-topics">${extraTopics.map((t) => `<span class="x-topic">#${escape(t)}</span>`).join(' ')}</div>` : ''}
+    ${dateLine ? `<div class="x-date">${escape(dateLine)}</div>` : ''}
+    ${counts.length ? `<div class="x-counts">${counts.join('<i>·</i>')}</div>` : ''}`;
+}
+
+function xhsCommentsHtml(xhs?: XhsExtra): string {
+  if (!xhs) return '';
+  const list = xhs.comments ?? [];
+  const totalNum = Number(xhs.commentCount);
+  const total = Number.isFinite(totalNum) && totalNum > 0 ? totalNum : 0;
+  if (!list.length) {
+    if (!total) return '';
+    return `<div class="x-comments"><div class="x-ctotal">共 ${total} 条评论</div><div class="x-cnote">保存时页面还没加载评论</div></div>`;
+  }
+  const head = total
+    ? `共 ${total} 条评论${list.length < total ? `<span class="x-csaved">已保存 ${list.length} 条</span>` : ''}`
+    : `已保存 ${list.length} 条评论`;
+  return `<div class="x-comments">
+  <div class="x-ctotal">${head}</div>
+  ${list.map((c) => commentHtml(c, false)).join('\n')}
+</div>`;
+}
+
+const XHS_CSS = `
+  .x-author { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .x-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; background: #2a2a2c; }
+  .x-avatar-ph { display: inline-flex; align-items: center; justify-content: center; color: #999; font-size: 14px; }
+  .x-name { font-size: 15px; font-weight: 500; color: #ccc; }
+  .x-title { font-size: 18px; font-weight: 600; line-height: 1.45; margin: 6px 0 8px; color: #f2f2f2; word-break: break-word; }
+  .x-desc { font-size: 15px; line-height: 1.7; color: #e6e6e6; white-space: pre-wrap; word-break: break-word; }
+  .x-topics { margin-top: 10px; }
+  .x-topic { color: #8ab4ff; }
+  .x-date { margin-top: 14px; font-size: 13px; color: #888; }
+  .x-counts { margin-top: 6px; font-size: 12px; color: #888; }
+  .x-counts i { font-style: normal; margin: 0 6px; }
+  .x-comments { margin-top: 24px; padding-top: 16px; border-top: 1px solid #2a2a2c; }
+  .x-ctotal { font-size: 14px; color: #999; margin-bottom: 14px; }
+  .x-csaved { margin-left: 8px; font-size: 12px; color: #777; }
+  .x-cnote { font-size: 13px; color: #777; }
+  .x-c { display: flex; gap: 10px; margin-bottom: 18px; }
+  .x-c-sub { margin: 14px 0 0; }
+  .x-cavatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; background: #2a2a2c; }
+  .x-c-sub .x-cavatar { width: 24px; height: 24px; font-size: 11px; }
+  .x-cbody { flex: 1; min-width: 0; }
+  .x-cname { font-size: 13px; color: #999; display: flex; align-items: center; gap: 6px; }
+  .x-ctag { font-size: 11px; line-height: 1; padding: 3px 6px; border-radius: 999px; background: #2a2a2c; color: #aaa; }
+  .x-ctext { margin-top: 4px; font-size: 14px; line-height: 1.6; color: #e6e6e6; white-space: pre-wrap; word-break: break-word; }
+  .x-cto { color: #999; }
+  .x-cpics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .x-cpics img { width: 160px; max-width: 70%; height: auto; max-height: 220px; object-fit: cover; border-radius: 8px; background: #1e1e20; cursor: zoom-in; }
+  .x-cmeta { margin-top: 6px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #888; }
+  .x-clike { display: inline-flex; align-items: center; gap: 3px; }
+  .x-cmore { margin-top: 10px; font-size: 13px; color: #8ab4ff; }
+
+  @media (prefers-color-scheme: light) {
+    .x-avatar, .x-cavatar { background: #f0f0f0; }
+    .x-name { color: #333; }
+    .x-title { color: #222; }
+    .x-desc, .x-ctext { color: #333; }
+    .x-topic, .x-cmore { color: #13386c; }
+    .x-date, .x-counts, .x-cmeta { color: #999; }
+    .x-comments { border-top-color: #f0f0f0; }
+    .x-ctotal { color: #666; }
+    .x-csaved, .x-cnote { color: #aaa; }
+    .x-cname, .x-cto { color: #888; }
+    .x-ctag { background: #f5f5f5; color: #999; }
+    .x-cpics img { background: #f5f5f5; }
+  }
+`;
 
 function mediaTag(m: NoteMedia, poster?: string): string {
   if (m.kind === 'video') {
@@ -117,6 +283,7 @@ export function renderNoteHtml(input: RenderInput): string {
   const title = input.title ?? (author ? `@${author}` : 'OffNote');
   const dateStr = formatDate(input.createdAt);
   const total = input.media.length;
+  const isXhs = input.source === 'rednote';
 
   const mediaBlock = total > 1 ? carouselHtml(input) : singleMediaHtml(input);
 
@@ -289,6 +456,7 @@ export function renderNoteHtml(input: RenderInput): string {
   }
 
   .single img, .slide img { cursor: zoom-in; }
+  ${isXhs ? XHS_CSS : ''}
 
   #lb {
     position: fixed; inset: 0; z-index: 2147483647;
@@ -325,14 +493,15 @@ export function renderNoteHtml(input: RenderInput): string {
 </head>
 <body>
   <div class="wrap">
-    ${author ? `<div class="author">@${escape(author)}</div>` : ''}
+    ${isXhs ? xhsHeaderHtml(author, input.xhs) : author ? `<div class="author">@${escape(author)}</div>` : ''}
     ${mediaBlock}
-    ${caption ? `<div class="caption">${paragraphs(caption)}</div>` : ''}
+    ${isXhs ? xhsContentHtml(input) : caption ? `<div class="caption">${paragraphs(caption)}</div>` : ''}
     <div class="meta">
-      <span>${escape(dateStr)}</span>
+      <span>${isXhs ? '保存于 ' : ''}${escape(dateStr)}</span>
       ${sourceLine}
     </div>
     ${remarkBlock}
+    ${isXhs ? xhsCommentsHtml(input.xhs) : ''}
   </div>
 
   <div id="lb" role="dialog" aria-modal="true" aria-hidden="true">
@@ -412,6 +581,14 @@ export function renderNoteHtml(input: RenderInput): string {
           lastTap = now;
         }
       }, { passive: false });
+    });
+
+    // 评论图片：单击放大
+    document.querySelectorAll('.x-cpics img').forEach(function (im) {
+      im.addEventListener('click', function (e) {
+        e.preventDefault();
+        open(im.currentSrc || im.src);
+      });
     });
 
     // Close interactions

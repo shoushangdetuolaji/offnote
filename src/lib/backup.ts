@@ -5,6 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { zip, unzip } from 'react-native-zip-archive';
 
 import type { Category } from './categories';
+import { mergeTags, TAG_KEY, type Tag } from './tags';
 
 const BACKUP_VERSION = 1;
 const ROOT_NAME = 'OffNote';
@@ -20,6 +21,7 @@ type Manifest = {
   version: number;
   createdAt: number;
   categories: Category[];
+  tags?: Tag[];
   cobaltInstance: string | null;
 };
 
@@ -49,15 +51,17 @@ export async function exportBackup(onProgress?: ProgressFn): Promise<string> {
     // 1) manifest.json
     const catsRaw = await AsyncStorage.getItem(CAT_KEY);
     const cobalt = await AsyncStorage.getItem(COBALT_KEY);
+    const tagsRaw = await AsyncStorage.getItem(TAG_KEY);
     const manifest: Manifest = {
       version: BACKUP_VERSION,
       createdAt: Date.now(),
       categories: catsRaw ? (JSON.parse(catsRaw) as Category[]) : [],
+      tags: tagsRaw ? (JSON.parse(tagsRaw) as Tag[]) : [],
       cobaltInstance: cobalt ?? null,
     };
     const manifestFile = new File(staging, 'manifest.json');
     manifestFile.create();
-    manifestFile.write(JSON.stringify(manifest, null, 2), { encoding: 'utf8' });
+    manifestFile.writeSync(JSON.stringify(manifest, null, 2), { encoding: 'utf8' });
 
     // 2) 复制 OffNote 目录
     const root = new Directory(Paths.document, ROOT_NAME);
@@ -120,6 +124,7 @@ export async function importBackup(
       try {
         const manifest = JSON.parse(await manifestFile.text()) as Manifest;
         await mergeCategories(manifest.categories ?? []);
+        if (Array.isArray(manifest.tags)) await mergeTags(manifest.tags);
         if (manifest.cobaltInstance) {
           const current = await AsyncStorage.getItem(COBALT_KEY);
           if (!current) {
@@ -133,6 +138,7 @@ export async function importBackup(
     onProgress?.('正在恢复笔记…');
     let added = 0;
     let skipped = 0;
+    const restoredTags: string[] = [];
     const srcRoot = new Directory(workDir, ROOT_NAME);
     if (srcRoot.exists) {
       const destRoot = new Directory(Paths.document, ROOT_NAME);
@@ -147,9 +153,16 @@ export async function importBackup(
           continue;
         }
         entry.copy(target);
-        await rewriteNotePaths(new Directory(destRoot, id));
+        restoredTags.push(...(await rewriteNotePaths(new Directory(destRoot, id))));
         added += 1;
       }
+    }
+
+    // 笔记里出现过但标签库没有的，补登记，保证下次能直接勾选
+    if (restoredTags.length) {
+      try {
+        await mergeTags(restoredTags);
+      } catch {}
     }
 
     return { added, skipped };
@@ -165,16 +178,18 @@ export async function importBackup(
  * 沙盒路径变化）后会失效。恢复时按本机实际路径重写，index.html 用的是相对
  * 文件名，无需处理。
  */
-async function rewriteNotePaths(dir: Directory): Promise<void> {
+async function rewriteNotePaths(dir: Directory): Promise<string[]> {
   const metaFile = new File(dir, 'meta.json');
-  if (!metaFile.exists) return;
+  if (!metaFile.exists) return [];
   try {
     const note = JSON.parse(await metaFile.text());
     note.dirUri = dir.uri;
     note.indexUri = new File(dir, 'index.html').uri;
-    metaFile.write(JSON.stringify(note, null, 2), { encoding: 'utf8' });
+    metaFile.writeSync(JSON.stringify(note, null, 2), { encoding: 'utf8' });
+    return Array.isArray(note.tags) ? note.tags : [];
   } catch {
     // 单条损坏不影响其他笔记恢复
+    return [];
   }
 }
 

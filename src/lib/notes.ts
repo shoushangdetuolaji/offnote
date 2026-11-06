@@ -2,6 +2,11 @@ import { Directory, File, Paths } from 'expo-file-system';
 
 import { renderNoteHtml } from './html';
 import type { IgMetadata } from './metadata';
+import { normalizeTags, touchTags } from './tags';
+import { downloadXhsExtra, type XhsExtra } from './xhsExtra';
+
+/** 详情页 HTML 模板版本；升级后打开老笔记会自动重新渲染 */
+export const HTML_VERSION = 2;
 
 export type MediaKind = 'video' | 'image';
 
@@ -23,11 +28,17 @@ export type Note = {
   starred?: boolean;
   /** id of the category this note belongs to, undefined = uncategorized */
   categoryId?: string;
+  /** user tags (names), see lib/tags */
+  tags?: string[];
   /** which platform this note was saved from */
   source?: NoteSource;
   sourceUrl?: string;
   media: NoteMedia[];
   thumbnailFilename?: string;
+  /** 小红书附加信息（话题、发布时间、评论等），图片为笔记目录内相对路径 */
+  xhs?: XhsExtra;
+  /** 生成 index.html 时的模板版本，见 HTML_VERSION */
+  htmlVersion?: number;
   dirUri: string;
   indexUri: string;
 };
@@ -75,11 +86,17 @@ export type CreateNoteInput = {
   note?: string;
   /** optional category id to assign */
   categoryId?: string;
+  /** optional tag names */
+  tags?: string[];
   /** source platform (defaults to instagram for back-compat) */
   source?: NoteSource;
   items: MediaInput[];
   metadata?: IgMetadata | null;
+  /** 小红书附加信息（远程 URL，保存时下载到本地） */
+  xhs?: XhsExtra;
   onItemProgress?: (index: number, total: number, fraction: number) => void;
+  /** 评论图片/头像下载进度 */
+  onExtraProgress?: (done: number, total: number) => void;
 };
 
 export type CreateNoteResult = {
@@ -117,7 +134,7 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
         await task.downloadAsync();
       } else {
         file.create({ overwrite: true });
-        file.write(item.source.data, { encoding: 'base64' });
+        file.writeSync(item.source.data, { encoding: 'base64' });
       }
       stored.push({ filename, kind: item.kind });
     } catch (e: any) {
@@ -142,19 +159,32 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     if (firstImage) thumbnailFilename = firstImage.filename;
   }
 
+  let xhs: XhsExtra | undefined;
+  if (input.xhs) {
+    try {
+      xhs = await downloadXhsExtra(dir, input.xhs, input.onExtraProgress);
+    } catch {
+      xhs = input.xhs;
+    }
+  }
+
   const createdAt = Date.now();
+  const tags = normalizeTags(input.tags);
   const note: Note = {
     id,
     createdAt,
     title: input.title.trim() || undefined,
     note: input.note?.trim() || undefined,
     categoryId: input.categoryId,
+    tags: tags.length ? tags : undefined,
     source: input.source ?? 'instagram',
     author: input.metadata?.author,
     caption: input.metadata?.caption,
     sourceUrl: input.metadata?.sourceUrl,
     media: stored,
     thumbnailFilename,
+    xhs,
+    htmlVersion: HTML_VERSION,
     dirUri: dir.uri,
     indexUri: new File(dir, 'index.html').uri,
   };
@@ -168,15 +198,23 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     thumbnailFilename,
     sourceUrl: note.sourceUrl,
     createdAt,
+    source: note.source,
+    xhs,
   });
 
   const indexFile = new File(dir, 'index.html');
   indexFile.create({ overwrite: true });
-  indexFile.write(html, { encoding: 'utf8' });
+  indexFile.writeSync(html, { encoding: 'utf8' });
 
   const metaFile = new File(dir, 'meta.json');
   metaFile.create({ overwrite: true });
-  metaFile.write(JSON.stringify(note, null, 2), { encoding: 'utf8' });
+  metaFile.writeSync(JSON.stringify(note, null, 2), { encoding: 'utf8' });
+
+  if (tags.length) {
+    try {
+      await touchTags(tags);
+    } catch {}
+  }
 
   return { ok: true, note };
 }
@@ -203,7 +241,7 @@ export async function listNotes(): Promise<Note[]> {
         parsed.dirUri = dirUri;
         parsed.indexUri = indexUri;
         try {
-          metaFile.write(JSON.stringify(parsed, null, 2), { encoding: 'utf8' });
+          metaFile.writeSync(JSON.stringify(parsed, null, 2), { encoding: 'utf8' });
         } catch {
           // 写回失败不影响本次读取
         }
@@ -220,7 +258,7 @@ export async function listNotes(): Promise<Note[]> {
 }
 
 export type NotePatch = Partial<
-  Pick<Note, 'title' | 'note' | 'starred' | 'caption' | 'categoryId'>
+  Pick<Note, 'title' | 'note' | 'starred' | 'caption' | 'categoryId' | 'tags'>
 >;
 
 export async function updateNote(
@@ -244,9 +282,20 @@ export async function updateNote(
     ...patch,
     title: patch.title?.trim() || current.title,
     note: patch.note === undefined ? current.note : patch.note.trim() || undefined,
+    htmlVersion: HTML_VERSION,
   };
+  if (patch.tags !== undefined) {
+    const tags = normalizeTags(patch.tags);
+    merged.tags = tags.length ? tags : undefined;
+  }
 
-  metaFile.write(JSON.stringify(merged, null, 2), { encoding: 'utf8' });
+  metaFile.writeSync(JSON.stringify(merged, null, 2), { encoding: 'utf8' });
+
+  if (patch.tags !== undefined && merged.tags?.length) {
+    try {
+      await touchTags(merged.tags);
+    } catch {}
+  }
 
   try {
     const html = renderNoteHtml({
@@ -258,14 +307,21 @@ export async function updateNote(
       thumbnailFilename: merged.thumbnailFilename,
       sourceUrl: merged.sourceUrl,
       createdAt: merged.createdAt,
+      source: merged.source,
+      xhs: merged.xhs,
     });
     const indexFile = new File(dir, 'index.html');
-    indexFile.write(html, { encoding: 'utf8' });
+    indexFile.writeSync(html, { encoding: 'utf8' });
   } catch {
     // 渲染失败不影响 meta 更新
   }
 
   return merged;
+}
+
+/** 用最新模板重新生成 index.html（老笔记升级样式用） */
+export async function refreshNoteHtml(noteId: string): Promise<Note | null> {
+  return updateNote(noteId, {});
 }
 
 export function deleteNote(note: Note): void {

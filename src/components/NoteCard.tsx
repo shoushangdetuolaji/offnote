@@ -141,7 +141,17 @@ export default function NoteCard({
             </Text>
           </View>
         ) : null}
-        <Text style={styles.cardMeta}>{formatDate(note.createdAt)}</Text>
+        {note.tags?.length ? (
+          <Text style={styles.tagsText} numberOfLines={1}>
+            {note.tags.map((t) => `#${t}`).join('  ')}
+          </Text>
+        ) : null}
+        <Text style={styles.cardMeta}>
+          {formatDate(note.xhs?.publishTime ?? note.createdAt)}
+          {note.xhs?.publishTime && note.xhs.ipLocation
+            ? `  ${note.xhs.ipLocation}`
+            : ''}
+        </Text>
       </View>
     </Pressable>
   );
@@ -172,7 +182,7 @@ export default function NoteCard({
           ref={swipeRef}
           friction={1.6}
           rightThreshold={36}
-          dragOffsetFromRightEdge={30}
+          dragOffsetFromRight={-30}
           overshootRight={false}
           renderRightActions={renderRightActions}
         >
@@ -319,6 +329,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9a7b00',
     flexShrink: 1,
+  },
+  tagsText: {
+    fontSize: 12,
+    color: '#1f6feb',
+    marginTop: 4,
   },
   cardMeta: {
     fontSize: 11,

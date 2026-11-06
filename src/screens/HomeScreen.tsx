@@ -91,7 +91,7 @@ export default function HomeScreen() {
           break;
       }
       if (!q) return true;
-      const hay = [n.title, n.author, n.caption, n.note]
+      const hay = [n.title, n.author, n.caption, n.note, ...(n.tags ?? [])]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
