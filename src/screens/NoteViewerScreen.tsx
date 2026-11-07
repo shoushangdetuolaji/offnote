@@ -26,6 +26,21 @@ import { WebView } from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview';
 
 import TagSelectList from '../components/TagSelectList';
+import TextPromptModal from '../components/TextPromptModal';
+import {
+  addHighlight,
+  addSnapshot,
+  formatClock,
+  removeHighlight,
+  removeSnapshot,
+  renameHighlight,
+} from '../lib/highlights';
+import {
+  EXTRAS_BOOT_JS,
+  extrasDataJs,
+  seekJs,
+  toastJs,
+} from '../lib/viewerExtrasJs';
 import { openOriginal } from '../lib/openOriginal';
 import {
   deleteNote,
@@ -57,6 +72,8 @@ export default function NoteViewerScreen({
   const [remarkDraft, setRemarkDraft] = useState('');
   const [tagEditing, setTagEditing] = useState(false);
   const [tagDraft, setTagDraft] = useState<string[]>([]);
+  /** 正在重命名的高光 id */
+  const [renamingHl, setRenamingHl] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
@@ -301,6 +318,108 @@ true;
     }
   };
 
+  // ---------- 高光时刻 / 截图 ----------
+  const inject = (js: string) => webRef.current?.injectJavaScript(js);
+
+  // 最新的笔记 + 串行队列：连点两次标记时，第二次基于第一次的结果，不会互相覆盖
+  const latestNoteRef = useRef<Note | null>(note);
+  const opChainRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingOpsRef = useRef(0);
+  // 没有进行中的操作（或换了一条笔记）时跟随 props；操作进行中以队列里的最新结果为准
+  if (pendingOpsRef.current === 0 || latestNoteRef.current?.id !== note?.id) {
+    latestNoteRef.current = note;
+  }
+  const enqueue = (op: (current: Note) => Promise<void>) => {
+    pendingOpsRef.current += 1;
+    opChainRef.current = opChainRef.current
+      .then(async () => {
+        const current = latestNoteRef.current;
+        if (current) await op(current);
+      })
+      .catch(() => {})
+      .finally(() => {
+        pendingOpsRef.current -= 1;
+      });
+  };
+
+  // 高光或截图变化时局部刷新页面里的列表，不 reload，视频不中断
+  useEffect(() => {
+    if (!note) return;
+    inject(extrasDataJs(note));
+  }, [note?.highlights, note?.snapshots]);
+
+  const applyUpdate = (updated: Note | null, okText: string) => {
+    if (!updated) {
+      inject(toastJs('保存失败'));
+      return;
+    }
+    latestNoteRef.current = updated;
+    onUpdated?.(updated);
+    inject(extrasDataJs(updated));
+    inject(toastJs(okText));
+  };
+
+  const handleAddHighlight = (media: string, time: number) =>
+    enqueue(async (current) => {
+      try {
+        applyUpdate(await addHighlight(current, media, time), `已标记 ${formatClock(time)}`);
+      } catch {
+        inject(toastJs('标记失败'));
+      }
+    });
+
+  const handleAddSnapshot = (media: string, time: number) =>
+    enqueue(async (current) => {
+      try {
+        applyUpdate(await addSnapshot(current, media, time), `已截取 ${formatClock(time)}`);
+      } catch {
+        inject(toastJs('截取失败'));
+      }
+    });
+
+  const openHighlightMenu = (id: string) => {
+    const hl = note?.highlights?.find((h) => h.id === id);
+    if (!note || !hl) return;
+    Alert.alert(`${hl.label} · ${formatClock(hl.time)}`, undefined, [
+      { text: '重命名', onPress: () => setRenamingHl(id) },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () =>
+          enqueue(async (current) =>
+            applyUpdate(await removeHighlight(current, id), '已删除'),
+          ),
+      },
+      { text: '取消', style: 'cancel' },
+    ]);
+  };
+
+  const openSnapshotMenu = (id: string) => {
+    const shot = note?.snapshots?.find((x) => x.id === id);
+    if (!note || !shot) return;
+    Alert.alert(`截图 · ${formatClock(shot.time)}`, undefined, [
+      { text: '跳到该时刻', onPress: () => inject(seekJs(shot.media, shot.time)) },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () =>
+          enqueue(async (current) =>
+            applyUpdate(await removeSnapshot(current, id), '已删除'),
+          ),
+      },
+      { text: '取消', style: 'cancel' },
+    ]);
+  };
+
+  const submitHighlightName = async (text: string) => {
+    const id = renamingHl;
+    setRenamingHl(null);
+    if (!id) return;
+    enqueue(async (current) =>
+      applyUpdate(await renameHighlight(current, id, text), '已重命名'),
+    );
+  };
+
   const handleMessage = (e: WebViewMessageEvent) => {
     try {
       const data = JSON.parse(e.nativeEvent.data ?? '{}');
@@ -310,6 +429,14 @@ true;
         openRemark();
       } else if (data?.type === 'source' && note) {
         openOriginal(note);
+      } else if (data?.type === 'hl-add' && typeof data.media === 'string') {
+        handleAddHighlight(data.media, Number(data.time) || 0);
+      } else if (data?.type === 'shot-add' && typeof data.media === 'string') {
+        handleAddSnapshot(data.media, Number(data.time) || 0);
+      } else if (data?.type === 'hl-menu') {
+        openHighlightMenu(String(data.id));
+      } else if (data?.type === 'shot-menu') {
+        openSnapshotMenu(String(data.id));
       }
     } catch {}
   };
@@ -382,9 +509,10 @@ true;
             allowsInlineMediaPlayback
             mediaPlaybackRequiresUserAction={false}
             javaScriptEnabled
-            injectedJavaScript={remarkInjectJs}
+            injectedJavaScript={remarkInjectJs + EXTRAS_BOOT_JS + extrasDataJs(note)}
             onLoadEnd={() => {
               webRef.current?.injectJavaScript(remarkInjectJs);
+              webRef.current?.injectJavaScript(EXTRAS_BOOT_JS + extrasDataJs(note));
             }}
             onMessage={handleMessage}
             setSupportMultipleWindows={false}
@@ -496,6 +624,16 @@ true;
             />
           </KeyboardAvoidingView>
         )}
+
+        <TextPromptModal
+          visible={!!renamingHl}
+          title="重命名高光"
+          initial={note?.highlights?.find((h) => h.id === renamingHl)?.label ?? ''}
+          placeholder="比如：日照金山出现"
+          maxLength={40}
+          onCancel={() => setRenamingHl(null)}
+          onSubmit={submitHighlightName}
+        />
       </SafeAreaView>
     </Modal>
   );

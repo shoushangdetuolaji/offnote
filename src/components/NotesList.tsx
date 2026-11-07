@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -13,17 +12,17 @@ import {
 
 import type { Category } from '../lib/categories';
 import {
-  deleteNote,
-  notePublishInfo,
-  updateNote,
-  type Note,
-} from '../lib/notes';
+  activeTagKeys,
+  applyNoteFilter,
+  collectTags,
+  DEFAULT_NOTE_FILTER,
+  isFilterActive,
+  type NoteFilter,
+} from '../lib/noteFilter';
+import { updateNote, type Note } from '../lib/notes';
 import { listTags, tagKey } from '../lib/tags';
 import MoveToCategorySheet from './MoveToCategorySheet';
-import NoteFilterPanel, {
-  DEFAULT_NOTE_FILTER,
-  type NoteFilter,
-} from './NoteFilterPanel';
+import NoteFilterPanel from './NoteFilterPanel';
 import NoteCard from './NoteCard';
 
 type Props = {
@@ -78,85 +77,28 @@ export default function NotesList({
   }, [enableFilter, notes]);
 
   /** 当前列表里出现过的标签，按标签库的最近使用排序 */
-  const availableTags = useMemo(() => {
-    if (!enableFilter) return [];
-    const byKey = new Map<string, string>();
-    for (const n of notes) {
-      for (const t of n.tags ?? []) {
-        const k = tagKey(t);
-        if (!byKey.has(k)) byKey.set(k, t);
-      }
-    }
-    const rank = new Map(tagOrder.map((k, i) => [k, i]));
-    return [...byKey.entries()]
-      .sort(
-        ([a], [b]) =>
-          (rank.get(a) ?? Number.MAX_SAFE_INTEGER) -
-          (rank.get(b) ?? Number.MAX_SAFE_INTEGER),
-      )
-      .map(([, name]) => name);
-  }, [enableFilter, notes, tagOrder]);
+  const availableTags = useMemo(
+    () => (enableFilter ? collectTags(notes, tagOrder) : []),
+    [enableFilter, notes, tagOrder],
+  );
 
-  // 已选标签如果在当前列表里不存在了（被删/改），不参与筛选
-  const activeTagKeys = useMemo(() => {
-    const available = new Set(availableTags.map(tagKey));
-    return new Set(filter.tags.map(tagKey).filter((k) => available.has(k)));
-  }, [filter.tags, availableTags]);
+  const tagKeys = useMemo(
+    () => activeTagKeys(filter, availableTags),
+    [filter, availableTags],
+  );
 
-  const filterActive =
-    enableFilter &&
-    (filter.source !== 'all' ||
-      filter.sort !== 'newest' ||
-      activeTagKeys.size > 0);
+  const filterActive = enableFilter && isFilterActive(filter, tagKeys);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const result = notes.filter((n) => {
-      if (enableFilter) {
-        if (
-          filter.source !== 'all' &&
-          (n.source ?? 'instagram') !== filter.source
-        ) {
-          return false;
-        }
-        if (
-          activeTagKeys.size > 0 &&
-          !(n.tags ?? []).some((t) => activeTagKeys.has(tagKey(t)))
-        ) {
-          return false;
-        }
-      }
-      if (!q) return true;
-      const hay = [n.title, n.author, n.caption, n.note, ...(n.tags ?? [])]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    });
-    if (enableFilter) {
-      // 按发布时间排；没有发布时间的（老笔记 / IG）用保存时间
-      const dir = filter.sort === 'oldest' ? 1 : -1;
-      const ts = (n: Note) => notePublishInfo(n).time;
-      result.sort((a, b) => (ts(a) - ts(b)) * dir);
-    }
-    return result;
-  }, [notes, query, enableFilter, filter.source, filter.sort, activeTagKeys]);
-
-  const confirmDelete = (note: Note, closeSwipe?: () => void) => {
-    Alert.alert('删除这条笔记？', note.title ?? note.id, [
-      { text: '取消', style: 'cancel', onPress: () => closeSwipe?.() },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            deleteNote(note);
-          } catch {}
-          await onChanged?.();
-        },
-      },
-    ]);
-  };
+  const filtered = useMemo(
+    () =>
+      applyNoteFilter(
+        notes,
+        enableFilter ? filter : DEFAULT_NOTE_FILTER,
+        query,
+        enableFilter ? tagKeys : new Set<string>(),
+      ),
+    [notes, query, enableFilter, filter, tagKeys],
+  );
 
   const handleMoveToCategory = useCallback((note: Note) => {
     setMoveTarget(note);
@@ -174,13 +116,15 @@ export default function NotesList({
     [moveTarget, onChanged],
   );
 
-  const renderItem = ({ item }: { item: Note }) => (
-    <NoteCard
-      note={item}
-      onPress={onOpenNote}
-      onDelete={confirmDelete}
-      onLongPress={handleMoveToCategory}
-    />
+  const renderItem = useCallback(
+    ({ item }: { item: Note }) => (
+      <NoteCard
+        note={item}
+        onPress={onOpenNote}
+        onLongPress={handleMoveToCategory}
+      />
+    ),
+    [onOpenNote, handleMoveToCategory],
   );
 
   return (
@@ -246,6 +190,10 @@ export default function NotesList({
         data={filtered}
         keyExtractor={(n) => n.id}
         renderItem={renderItem}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
         contentContainerStyle={[
           styles.listContent,
           filtered.length === 0 && styles.listContentEmpty,

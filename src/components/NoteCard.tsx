@@ -1,32 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRef } from 'react';
+import { memo } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
-import type { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 
 import { notePublishInfo, type Note } from '../lib/notes';
 
 type Props = {
   note: Note;
   onPress: (note: Note) => void;
-  onDelete: (note: Note, close: () => void) => void;
   onLongPress?: (note: Note) => void;
-  /** When true, the card renders a checkbox and disables swipe / detail-open behaviour. */
+  /** When true, the card renders a checkbox instead of opening the detail. */
   selectionMode?: boolean;
   selected?: boolean;
 };
 
-export default function NoteCard({
+/**
+ * 笔记卡片。删除入口：首页长按多选 / 详情页「…」。
+ * memo：父组件状态变化时，props 没变的行不重渲染（父组件需传稳定的回调）。
+ */
+function NoteCard({
   note,
   onPress,
-  onDelete,
   onLongPress,
   selectionMode,
   selected,
 }: Props) {
-  const swipeRef = useRef<SwipeableMethods>(null);
-  const closeSwipe = () => swipeRef.current?.close();
-
   const thumbUri =
     note.thumbnailFilename && `${note.dirUri}${note.thumbnailFilename}`;
   const total = note.media?.length ?? 0;
@@ -160,42 +157,16 @@ export default function NoteCard({
     </Pressable>
   );
 
-  const renderRightActions = () => (
-    <View style={styles.actionsContainer}>
-      <Pressable
-        onPress={() => onDelete(note, closeSwipe)}
-        style={({ pressed }) => [
-          styles.deleteBtn,
-          pressed && styles.deleteBtnPressed,
-        ]}
-      >
-        <Ionicons name="trash-outline" size={20} color="#fff" />
-        <Text style={styles.deleteText}>删除</Text>
-      </Pressable>
-    </View>
-  );
-
   return (
     <View
       style={[styles.wrapper, selectionMode && selected && styles.wrapperSelected]}
     >
-      {selectionMode ? (
-        cardInner
-      ) : (
-        <Swipeable
-          ref={swipeRef}
-          friction={1.6}
-          rightThreshold={36}
-          dragOffsetFromRight={-30}
-          overshootRight={false}
-          renderRightActions={renderRightActions}
-        >
-          {cardInner}
-        </Swipeable>
-      )}
+      {cardInner}
     </View>
   );
 }
+
+export default memo(NoteCard);
 
 function formatDate(ts: number, dateOnly = false): string {
   const d = new Date(ts);
@@ -344,25 +315,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#999',
     marginTop: 2,
-  },
-  actionsContainer: {
-    width: 88,
-    flexDirection: 'row',
-    alignItems: 'stretch',
-  },
-  deleteBtn: {
-    flex: 1,
-    backgroundColor: '#e23b3b',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-  },
-  deleteBtnPressed: {
-    backgroundColor: '#bf2929',
-  },
-  deleteText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
   },
 });

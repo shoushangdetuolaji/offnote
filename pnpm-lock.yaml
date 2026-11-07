@@ -71,6 +71,9 @@ importers:
       expo-status-bar:
         specifier: ~58.0.4
         version: 58.0.4(expo@58.0.23(d500fe08c2b36304a888590ff02cdb05))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)
+      expo-video-thumbnails:
+        specifier: ~58.0.2
+        version: 58.0.2(expo@58.0.23(d500fe08c2b36304a888590ff02cdb05))
       pinyin-pro:
         specifier: ^3.29.5
         version: 3.29.5
@@ -1431,6 +1434,11 @@ packages:
       expo: '*'
       react: '*'
       react-native: '*'
+
+  expo-video-thumbnails@58.0.2:
+    resolution: {integrity: sha512-htFJPHGh4Ell7i9ZUZXhP18nusgKBYyd5uNufAU+R1h2EdBhi1TFaMfBHnY0o+P3AVa8JcQG986Tps4uUXTdgg==}
+    peerDependencies:
+      expo: '*'
 
   expo@58.0.23:
     resolution: {integrity: sha512-FRpmfd1mdjWS9bRSMoZkwpF8ugbN+w6BDtNs+DYEio7rdSguTJ6fs/gaeWSeN60AJAbz80Uj36AMWtpHkShG0g==}
@@ -4153,6 +4161,10 @@ snapshots:
       expo: 58.0.23(d500fe08c2b36304a888590ff02cdb05)
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1)
+
+  expo-video-thumbnails@58.0.2(expo@58.0.23(d500fe08c2b36304a888590ff02cdb05)):
+    dependencies:
+      expo: 58.0.23(d500fe08c2b36304a888590ff02cdb05)
 
   expo@58.0.23(d500fe08c2b36304a888590ff02cdb05):
     dependencies:

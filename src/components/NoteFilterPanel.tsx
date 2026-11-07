@@ -1,26 +1,23 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import {
+  DEFAULT_NOTE_FILTER,
+  type NoteFilter,
+} from '../lib/noteFilter';
 import { tagKey } from '../lib/tags';
 
-export type NoteFilter = {
-  source: 'all' | 'instagram' | 'rednote' | 'douyin';
-  sort: 'newest' | 'oldest';
-  /** 命中任一标签即显示；空数组 = 不限 */
-  tags: string[];
-};
+export { DEFAULT_NOTE_FILTER, type NoteFilter };
 
-export const DEFAULT_NOTE_FILTER: NoteFilter = {
-  source: 'all',
-  sort: 'newest',
-  tags: [],
-};
+export type CategoryOption = { value: string; label: string };
 
 type Props = {
   value: NoteFilter;
   onChange: (next: NoteFilter) => void;
   /** 当前列表里出现过的标签（已按最近使用排序） */
   tags: string[];
+  /** 传了才显示「分类」一组（首页用；分类页本身已限定分类） */
+  categoryOptions?: CategoryOption[];
   onCollapse: () => void;
 };
 
@@ -40,6 +37,7 @@ export default function NoteFilterPanel({
   value,
   onChange,
   tags,
+  categoryOptions,
   onCollapse,
 }: Props) {
   const selectedKeys = new Set(value.tags.map(tagKey));
@@ -60,6 +58,22 @@ export default function NoteFilterPanel({
         style={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
+        {categoryOptions && categoryOptions.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>分类</Text>
+            <View style={styles.grid}>
+              {categoryOptions.map((o) => (
+                <Option
+                  key={o.value}
+                  label={o.label}
+                  active={value.category === o.value}
+                  onPress={() => onChange({ ...value, category: o.value })}
+                />
+              ))}
+            </View>
+          </>
+        )}
+
         <Text style={styles.sectionTitle}>笔记类型</Text>
         <View style={styles.grid}>
           {SOURCE_OPTIONS.map((o) => (

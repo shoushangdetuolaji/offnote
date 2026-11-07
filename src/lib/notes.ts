@@ -18,6 +18,30 @@ export type NoteMedia = {
 
 export type NoteSource = 'instagram' | 'rednote' | 'douyin';
 
+export type Highlight = {
+  id: string;
+  /** 视频文件名（笔记目录内） */
+  media: string;
+  /** 秒 */
+  time: number;
+  label: string;
+  /** 缩略图相对路径，如 shots/hl-xxx.jpg */
+  thumb?: string;
+  createdAt: number;
+};
+
+export type Snapshot = {
+  id: string;
+  media: string;
+  /** 秒 */
+  time: number;
+  /** 相对路径，如 shots/shot-xxx.jpg */
+  file: string;
+  width?: number;
+  height?: number;
+  createdAt: number;
+};
+
 export type Note = {
   id: string;
   createdAt: number;
@@ -38,6 +62,10 @@ export type Note = {
   thumbnailFilename?: string;
   /** 小红书/抖音附加信息（话题、发布时间、互动数、评论等），图片为笔记目录内相对路径 */
   xhs?: XhsExtra;
+  /** 视频高光时刻（标记的时间点），见 lib/highlights */
+  highlights?: Highlight[];
+  /** 从视频截取的画面，存在笔记目录 shots/ 下 */
+  snapshots?: Snapshot[];
   /** 原帖发布时间（IG 只有日期）；小红书/抖音的在 xhs.publishTime */
   publishedAt?: number;
   /** 生成 index.html 时的模板版本，见 HTML_VERSION */
@@ -265,7 +293,17 @@ export async function listNotes(): Promise<Note[]> {
 }
 
 export type NotePatch = Partial<
-  Pick<Note, 'title' | 'note' | 'starred' | 'caption' | 'categoryId' | 'tags'>
+  Pick<
+    Note,
+    | 'title'
+    | 'note'
+    | 'starred'
+    | 'caption'
+    | 'categoryId'
+    | 'tags'
+    | 'highlights'
+    | 'snapshots'
+  >
 >;
 
 export async function updateNote(

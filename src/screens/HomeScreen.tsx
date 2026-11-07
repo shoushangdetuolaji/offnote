@@ -10,7 +10,6 @@ import {
   Platform,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -20,6 +19,9 @@ import type { AppStateStatus } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import MoveToCategorySheet from '../components/MoveToCategorySheet';
+import NoteFilterPanel, {
+  type CategoryOption,
+} from '../components/NoteFilterPanel';
 import NoteCard from '../components/NoteCard';
 import PasteUrlModal from '../components/PasteUrlModal';
 import SelectionBar from '../components/SelectionBar';
@@ -27,11 +29,22 @@ import SourcePickerSheet from '../components/SourcePickerSheet';
 import Wordmark from '../components/Wordmark';
 import { listCategories, type Category } from '../lib/categories';
 import {
+  activeTagKeys,
+  applyNoteFilter,
+  CATEGORY_ALL,
+  CATEGORY_UNCATEGORIZED,
+  collectTags,
+  DEFAULT_NOTE_FILTER,
+  isFilterActive,
+  type NoteFilter,
+} from '../lib/noteFilter';
+import {
   deleteNote,
   listNotes,
   updateNote,
   type Note,
 } from '../lib/notes';
+import { listTags, tagKey } from '../lib/tags';
 import { extractSupportedUrl, isRednoteUrl } from '../lib/url';
 import { saveXhsFromUrl } from '../lib/xhs';
 import CobaltWebScreen from './CobaltWebScreen';
@@ -40,12 +53,6 @@ import NoteViewerScreen from './NoteViewerScreen';
 import XhsWebScreen from './XhsWebScreen';
 
 import type { NoteSource } from '../lib/notes';
-
-type FilterKey =
-  | { kind: 'all' }
-  | { kind: 'starred' }
-  | { kind: 'uncategorized' }
-  | { kind: 'category'; id: string };
 
 export default function HomeScreen() {
   const [webVisible, setWebVisible] = useState(false);
@@ -72,36 +79,54 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeNote, setActiveNote] = useState<Note | null>(null);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<FilterKey>({ kind: 'all' });
+  const [filter, setFilter] = useState<NoteFilter>(DEFAULT_NOTE_FILTER);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [tagOrder, setTagOrder] = useState<string[]>([]);
 
   const reloadAll = useCallback(async () => {
-    const [ns, cats] = await Promise.all([listNotes(), listCategories()]);
+    const [ns, cats, tags] = await Promise.all([
+      listNotes(),
+      listCategories(),
+      listTags(),
+    ]);
     setNotes(ns);
     setCategories(cats);
+    setTagOrder(tags.map((t) => tagKey(t.name)));
   }, []);
 
-  const filteredNotes = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return notes.filter((n) => {
-      switch (filter.kind) {
-        case 'starred':
-          if (!n.starred) return false;
-          break;
-        case 'uncategorized':
-          if (n.categoryId) return false;
-          break;
-        case 'category':
-          if (n.categoryId !== filter.id) return false;
-          break;
-      }
-      if (!q) return true;
-      const hay = [n.title, n.author, n.caption, n.note, ...(n.tags ?? [])]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [notes, query, filter]);
+  // 分类被删除后，筛选自动回到「不限」
+  const effectiveFilter = useMemo<NoteFilter>(() => {
+    const c = filter.category;
+    if (
+      c !== CATEGORY_ALL &&
+      c !== CATEGORY_UNCATEGORIZED &&
+      !categories.some((cat) => cat.id === c)
+    ) {
+      return { ...filter, category: CATEGORY_ALL };
+    }
+    return filter;
+  }, [filter, categories]);
+
+  const availableTags = useMemo(() => collectTags(notes, tagOrder), [notes, tagOrder]);
+  const tagKeys = useMemo(
+    () => activeTagKeys(effectiveFilter, availableTags),
+    [effectiveFilter, availableTags],
+  );
+  const filterActive = isFilterActive(effectiveFilter, tagKeys);
+
+  const filteredNotes = useMemo(
+    () => applyNoteFilter(notes, effectiveFilter, query, tagKeys),
+    [notes, effectiveFilter, query, tagKeys],
+  );
+
+  const categoryOptions: CategoryOption[] = useMemo(
+    () => [
+      { value: CATEGORY_ALL, label: '不限' },
+      { value: CATEGORY_UNCATEGORIZED, label: '未分类' },
+      ...categories.map((c) => ({ value: c.id, label: c.name })),
+    ],
+    [categories],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -240,26 +265,6 @@ export default function HomeScreen() {
     setRefreshing(false);
   };
 
-  const confirmDelete = (note: Note, closeSwipe?: () => void) => {
-    Alert.alert('删除这条笔记？', note.title ?? note.id, [
-      {
-        text: '取消',
-        style: 'cancel',
-        onPress: () => closeSwipe?.(),
-      },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: () => {
-          try {
-            deleteNote(note);
-          } catch {}
-          reloadAll();
-        },
-      },
-    ]);
-  };
-
   const handleLongPressNote = useCallback((note: Note) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -350,41 +355,18 @@ export default function HomeScreen() {
     [moveTarget, reloadAll],
   );
 
-  const renderItem = ({ item }: { item: Note }) => (
-    <NoteCard
-      note={item}
-      onPress={handleNotePress}
-      onDelete={confirmDelete}
-      onLongPress={handleLongPressNote}
-      selectionMode={selectionMode}
-      selected={selectedIds.has(item.id)}
-    />
+  const renderItem = useCallback(
+    ({ item }: { item: Note }) => (
+      <NoteCard
+        note={item}
+        onPress={handleNotePress}
+        onLongPress={handleLongPressNote}
+        selectionMode={selectionMode}
+        selected={selectedIds.has(item.id)}
+      />
+    ),
+    [handleNotePress, handleLongPressNote, selectionMode, selectedIds],
   );
-
-  type TabSpec = { key: string; label: string; count: number; filter: FilterKey; icon?: 'star' };
-  const tabs: TabSpec[] = [
-    { key: 'all', label: '全部', count: notes.length, filter: { kind: 'all' } },
-    {
-      key: 'uncategorized',
-      label: '未分类',
-      count: notes.filter((n) => !n.categoryId).length,
-      filter: { kind: 'uncategorized' },
-    },
-    ...categories.map((c) => ({
-      key: `cat:${c.id}`,
-      label: c.name,
-      count: notes.filter((n) => n.categoryId === c.id).length,
-      filter: { kind: 'category' as const, id: c.id },
-    })),
-  ];
-
-  const isActive = (t: TabSpec) => {
-    if (filter.kind !== t.filter.kind) return false;
-    if (filter.kind === 'category' && t.filter.kind === 'category') {
-      return filter.id === t.filter.id;
-    }
-    return true;
-  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -411,56 +393,54 @@ export default function HomeScreen() {
         </View>
       )}
 
-      <View style={styles.searchBox}>
-        <Ionicons name="search-outline" size={16} color="#888" />
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder="搜索标题、作者、文案或备注"
-          placeholderTextColor="#999"
-          style={styles.searchInput}
-          returnKeyType="search"
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        {query.length > 0 && (
-          <Pressable onPress={() => setQuery('')} hitSlop={6}>
-            <Ionicons name="close-circle" size={16} color="#bbb" />
-          </Pressable>
-        )}
+      <View style={styles.searchRow}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search-outline" size={16} color="#888" />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="搜索标题、作者、文案或备注"
+            placeholderTextColor="#999"
+            style={styles.searchInput}
+            returnKeyType="search"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {query.length > 0 && (
+            <Pressable onPress={() => setQuery('')} hitSlop={6}>
+              <Ionicons name="close-circle" size={16} color="#bbb" />
+            </Pressable>
+          )}
+        </View>
+        <Pressable
+          onPress={() => setPanelOpen((v) => !v)}
+          hitSlop={6}
+          style={[
+            styles.filterBtn,
+            (panelOpen || filterActive) && styles.filterBtnActive,
+          ]}
+          accessibilityLabel="筛选"
+        >
+          <Ionicons
+            name="options-outline"
+            size={18}
+            color={filterActive ? '#ff2442' : '#333'}
+          />
+          <Text style={[styles.filterBtnText, filterActive && styles.filterBtnTextActive]}>
+            筛选
+          </Text>
+        </Pressable>
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabsRow}
-        style={styles.tabsScroll}
-        keyboardShouldPersistTaps="handled"
-      >
-        {tabs.map((t) => {
-          const active = isActive(t);
-          return (
-            <Pressable
-              key={t.key}
-              onPress={() => setFilter(t.filter)}
-              style={[styles.tabBtn, active && styles.tabBtnActive]}
-            >
-              {t.icon === 'star' && (
-                <Ionicons
-                  name="star"
-                  size={12}
-                  color={active ? '#fff' : '#f5b400'}
-                  style={{ marginRight: 4 }}
-                />
-              )}
-              <Text style={[styles.tabText, active && styles.tabTextActive]}>
-                {t.label}
-                {t.count > 0 ? ` ${t.count}` : ''}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+      {panelOpen && (
+        <NoteFilterPanel
+          value={effectiveFilter}
+          onChange={setFilter}
+          tags={availableTags}
+          categoryOptions={categoryOptions}
+          onCollapse={() => setPanelOpen(false)}
+        />
+      )}
 
       {pendingUrl && (
         <View style={styles.banner}>
@@ -501,6 +481,11 @@ export default function HomeScreen() {
         data={filteredNotes}
         keyExtractor={(n) => n.id}
         renderItem={renderItem}
+        extraData={selectionMode}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
         contentContainerStyle={[
           styles.listContent,
           filteredNotes.length === 0 && styles.listContentEmpty,
@@ -516,14 +501,14 @@ export default function HomeScreen() {
                 <>
                   <Text style={styles.emptyTitle}>还没有离线笔记</Text>
                   <Text style={styles.emptyHint}>
-                    复制小红书 / Instagram 链接 → 点右上「+」开始保存
+                    复制小红书 / 抖音 / Instagram 链接 → 点右上「+」开始保存
                   </Text>
                 </>
               ) : (
                 <>
                   <Text style={styles.emptyTitle}>没找到匹配的笔记</Text>
                   <Text style={styles.emptyHint}>
-                    换个关键词，或切换上方分类
+                    {filterActive ? '换个关键词或调整筛选条件' : '换个关键词试试'}
                   </Text>
                 </>
               )}
@@ -665,9 +650,16 @@ const styles = StyleSheet.create({
   headerCtaPressed: {
     backgroundColor: '#f0f0f0',
   },
-  searchBox: {
+  searchRow: {
     marginHorizontal: 20,
     marginTop: 6,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  searchBox: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -682,36 +674,24 @@ const styles = StyleSheet.create({
     color: '#111',
     paddingVertical: 0,
   },
-  tabsScroll: {
-    flexGrow: 0,
-    flexShrink: 0,
-    height: 44,
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  tabsRow: {
+  filterBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 20,
-  },
-  tabBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
+    gap: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
     backgroundColor: '#f3f4f6',
   },
-  tabBtnActive: {
-    backgroundColor: '#111',
+  filterBtnActive: {
+    backgroundColor: '#fff0f1',
   },
-  tabText: {
-    fontSize: 13,
-    color: '#444',
+  filterBtnText: {
+    fontSize: 14,
+    color: '#333',
   },
-  tabTextActive: {
-    color: '#fff',
+  filterBtnTextActive: {
+    color: '#ff2442',
     fontWeight: '600',
   },
   banner: {
