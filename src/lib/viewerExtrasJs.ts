@@ -86,7 +86,18 @@ export const EXTRAS_BOOT_JS = `
   window.__offnoteToast = toast;
 
   var track = document.getElementById('track');
-  function mediaOf(v) { return v.getAttribute('src'); }
+  function mediaOf(v) { return v.getAttribute('src') || v.currentSrc || ''; }
+  function fileKey(src) {
+    var clean = String(src || '').split('?')[0].split('#')[0];
+    try { clean = decodeURIComponent(clean); } catch (e) {}
+    var parts = clean.split('/');
+    return parts[parts.length - 1];
+  }
+  function sameMedia(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    return fileKey(a) === fileKey(b);
+  }
   function currentVideo() {
     if (!track) return videos[0];
     var i = Math.round(track.scrollLeft / (track.clientWidth || 1));
@@ -98,6 +109,70 @@ export const EXTRAS_BOOT_JS = `
   if (track) track.addEventListener('scroll', function () { window.requestAnimationFrame(updateBar); });
   updateBar();
 
+  function framePoster(v) {
+    try {
+      var w = v.videoWidth || 0, h = v.videoHeight || 0;
+      if (!w || !h) return '';
+      var maxW = 360;
+      var scale = w > maxW ? maxW / w : 1;
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(w * scale));
+      canvas.height = Math.max(1, Math.round(h * scale));
+      var ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+      var spots = [0.2, 0.5, 0.8];
+      var ink = 0;
+      for (var sy = 0; sy < spots.length; sy++) {
+        for (var sx = 0; sx < spots.length; sx++) {
+          var px = ctx.getImageData(
+            Math.max(0, Math.floor(canvas.width * spots[sx]) - 1),
+            Math.max(0, Math.floor(canvas.height * spots[sy]) - 1),
+            1,
+            1
+          ).data;
+          ink += px[0] + px[1] + px[2];
+        }
+      }
+      if (ink < 24) return '';
+      return canvas.toDataURL('image/jpeg', 0.72);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  window.__offnoteCapturePosters = function (list) {
+    (list || []).forEach(function (item) {
+      var src = '';
+      videos.forEach(function (x) { if (sameMedia(mediaOf(x), item.media)) src = mediaOf(x); });
+      if (!src && videos.length === 1) src = mediaOf(videos[0]);
+      if (!src) return;
+      var v = document.createElement('video');
+      v.muted = true;
+      v.setAttribute('playsinline', '');
+      v.preload = 'auto';
+      v.src = src;
+      v.style.cssText = 'position:fixed;width:2px;height:2px;left:-9999px;opacity:0;pointer-events:none';
+      document.body.appendChild(v);
+      var done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        var poster = framePoster(v);
+        try { v.pause(); } catch (e) {}
+        v.remove();
+        if (poster) post({ type: 'hl-poster', id: item.id, poster: poster });
+      }
+      v.addEventListener('seeked', finish, { once: true });
+      v.addEventListener('error', function () { if (!done) { done = true; v.remove(); } }, { once: true });
+      function arm() {
+        try { v.currentTime = Math.max(0, Number(item.time) || 0); } catch (e) { v.remove(); }
+      }
+      if (v.readyState >= 1) arm();
+      else v.addEventListener('loadedmetadata', arm, { once: true });
+    });
+  };
+
   var busy = false;
   function act(type) {
     var v = currentVideo();
@@ -105,41 +180,72 @@ export const EXTRAS_BOOT_JS = `
     busy = true;
     setTimeout(function () { busy = false; }, 1200);
     var t = v.currentTime || 0;
-    post({ type: type, media: mediaOf(v), time: t });
+    var payload = { type: type, media: mediaOf(v), time: t };
+    if (type === 'hl-add') payload.poster = framePoster(v);
+    post(payload);
     toast(type === 'hl-add' ? '标记 ' + clock(t) + '…' : '截取 ' + clock(t) + '…');
   }
   document.getElementById('ox-hl').addEventListener('click', function (e) { e.preventDefault(); act('hl-add'); });
   document.getElementById('ox-shot').addEventListener('click', function (e) { e.preventDefault(); act('shot-add'); });
 
+  function seekTo(v, time) {
+    var target = Math.max(0, Number(time) || 0);
+    function apply() {
+      try { v.currentTime = target; } catch (e) {}
+    }
+    try { v.pause(); } catch (e) {}
+    apply();
+    var play = function () {
+      var p;
+      try { p = v.play(); } catch (e) {}
+      if (p && p.then) p.then(apply).catch(function () {});
+    };
+    if (v.readyState >= 1) play();
+    else {
+      v.addEventListener('loadedmetadata', function () { apply(); play(); }, { once: true });
+      try { v.load(); } catch (e) {}
+    }
+    v.addEventListener('seeked', function () {
+      if (Math.abs((v.currentTime || 0) - target) > 0.45) apply();
+    }, { once: true });
+  }
+
   window.__offnoteSeek = function (media, time) {
     var v = null;
-    videos.forEach(function (x) { if (mediaOf(x) === media) v = x; });
+    videos.forEach(function (x) { if (sameMedia(mediaOf(x), media)) v = x; });
+    if (!v && videos.length === 1) v = videos[0];
     if (!v) return;
+    videos.forEach(function (x) { if (x !== v) { try { x.pause(); } catch (e) {} } });
     if (track) {
-      var slide = v.closest('.slide');
-      var idx = Array.prototype.indexOf.call(track.children, slide);
-      if (idx >= 0) track.scrollTo({ left: idx * track.clientWidth, behavior: 'smooth' });
+      var slide = v.closest ? v.closest('.slide') : null;
+      var idx = slide ? Array.prototype.indexOf.call(track.children, slide) : -1;
+      if (idx >= 0) track.scrollTo({ left: idx * track.clientWidth, behavior: 'auto' });
     }
-    var go = function () {
-      try { v.currentTime = time; var p = v.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
-    };
-    if (v.readyState >= 1) go();
-    else { v.addEventListener('loadedmetadata', go, { once: true }); try { v.load(); } catch (e) {} }
-    (anchor || v).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    try { (anchor || v).scrollIntoView({ behavior: 'auto', block: 'start' }); } catch (e) {}
+    seekTo(v, time);
+    toast('跳到 ' + clock(time));
   };
 
   // 点按 / 长按（500ms）区分
   function pressable(el, onTap, onLong) {
-    var timer = null, long = false;
+    var timer = null, long = false, handled = false;
     el.addEventListener('touchstart', function () {
       long = false;
-      timer = setTimeout(function () { long = true; onLong(); }, 500);
+      handled = false;
+      timer = setTimeout(function () { long = true; handled = true; onLong(); }, 500);
     }, { passive: true });
     el.addEventListener('touchmove', function () { clearTimeout(timer); }, { passive: true });
-    el.addEventListener('touchend', function () { clearTimeout(timer); });
+    el.addEventListener('touchend', function (e) {
+      clearTimeout(timer);
+      if (long) { long = false; return; }
+      handled = true;
+      if (e.cancelable) e.preventDefault();
+      onTap();
+    });
     el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     el.addEventListener('click', function (e) {
       e.preventDefault();
+      if (handled) { handled = false; return; }
       if (long) { long = false; return; }
       onTap();
     });
@@ -160,7 +266,10 @@ export const EXTRAS_BOOT_JS = `
     var hls = data.highlights || [], shots = data.snapshots || [];
     var multi = videos.length > 1;
     var nth = {};
-    videos.forEach(function (v, i) { nth[mediaOf(v)] = i + 1; });
+    videos.forEach(function (v, i) {
+      nth[mediaOf(v)] = i + 1;
+      nth[fileKey(mediaOf(v))] = i + 1;
+    });
 
     var hBox = document.getElementById('ox-hls');
     if (!hls.length) {
@@ -172,10 +281,10 @@ export const EXTRAS_BOOT_JS = `
           return '<div class="ox-hl" data-id="' + esc(x.id) + '">' +
             (x.thumb ? '<img src="' + esc(x.thumb) + '" alt="">' : '<span class="ox-ph">★</span>') +
             '<div class="ox-hl-body"><div class="ox-hl-label">' + esc(x.label) + '</div>' +
-            '<div class="ox-hl-time">' + clock(x.time) + (multi && nth[x.media] ? ' · 视频 ' + nth[x.media] : '') + '</div></div>' +
+            '<div class="ox-hl-time">' + clock(x.time) + (multi && (nth[x.media] || nth[fileKey(x.media)]) ? ' · 视频 ' + (nth[x.media] || nth[fileKey(x.media)]) : '') + '</div></div>' +
             '<span class="ox-play">▶</span></div>';
         }).join('') +
-        '<div class="ox-tip">点按跳转播放，长按重命名或删除</div>';
+        '<div class="ox-tip">点按跳到该时刻，长按重命名或删除</div>';
       Array.prototype.forEach.call(hBox.querySelectorAll('.ox-hl'), function (el) {
         var id = el.getAttribute('data-id');
         var x = hls.filter(function (k) { return k.id === id; })[0];
@@ -214,6 +323,12 @@ export function extrasDataJs(note: Pick<Note, 'highlights' | 'snapshots'> | null
     snapshots: note?.snapshots ?? [],
   };
   return `window.__offnoteExtras && window.__offnoteExtras(${JSON.stringify(data)}); true;`;
+}
+
+export function capturePostersJs(
+  highlights: { id: string; media: string; time: number }[],
+): string {
+  return `window.__offnoteCapturePosters && window.__offnoteCapturePosters(${JSON.stringify(highlights)}); true;`;
 }
 
 export function seekJs(media: string, time: number): string {

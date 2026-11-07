@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActionSheetIOS,
   Alert,
+  Animated,
   BackHandler,
+  Easing,
   Keyboard,
   KeyboardAvoidingView,
   Linking,
@@ -30,6 +31,8 @@ import TextPromptModal from '../components/TextPromptModal';
 import {
   addHighlight,
   addSnapshot,
+  attachHighlightPoster,
+  fillMissingHighlightThumbs,
   formatClock,
   removeHighlight,
   removeSnapshot,
@@ -37,6 +40,7 @@ import {
 } from '../lib/highlights';
 import {
   EXTRAS_BOOT_JS,
+  capturePostersJs,
   extrasDataJs,
   seekJs,
   toastJs,
@@ -74,6 +78,12 @@ export default function NoteViewerScreen({
   const [tagDraft, setTagDraft] = useState<string[]>([]);
   /** 正在重命名的高光 id */
   const [renamingHl, setRenamingHl] = useState<string | null>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [actionsMounted, setActionsMounted] = useState(false);
+  const actionsOpenedAt = useRef(0);
+  const drawerX = useRef(new Animated.Value(0)).current;
+  const drawerToken = useRef(0);
+  const pendingAction = useRef<(() => void) | null>(null);
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
@@ -213,6 +223,10 @@ true;
   useEffect(() => {
     if (!note) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (actionsOpen) {
+        setActionsOpen(false);
+        return true;
+      }
       if (tagEditing) {
         Keyboard.dismiss();
         setTagEditing(false);
@@ -231,7 +245,7 @@ true;
       return true;
     });
     return () => sub.remove();
-  }, [note, lightbox, remarkMode, tagEditing, onClose]);
+  }, [note, lightbox, remarkMode, tagEditing, actionsOpen, onClose]);
 
   const openRemark = () => {
     if (!note) return;
@@ -276,29 +290,64 @@ true;
     ]);
   };
 
-  const openActions = () => {
-    if (!note) return;
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ['备注', '标签', '删除', '取消'],
-          destructiveButtonIndex: 2,
-          cancelButtonIndex: 3,
-        },
-        (idx) => {
-          if (idx === 0) openRemark();
-          if (idx === 1) openTags();
-          if (idx === 2) handleDelete();
-        },
-      );
+  useEffect(() => {
+    if (!note) {
+      drawerToken.current += 1;
+      pendingAction.current = null;
+      drawerX.setValue(0);
+      setActionsMounted(false);
+      setActionsOpen(false);
       return;
     }
-    Alert.alert(note.title ?? 'OffNote', undefined, [
-      { text: '备注', onPress: openRemark },
-      { text: '标签', onPress: openTags },
-      { text: '删除', style: 'destructive', onPress: handleDelete },
-      { text: '取消', style: 'cancel' },
-    ]);
+    if (!actionsOpen) return;
+    drawerX.setValue(0);
+    setActionsMounted(true);
+  }, [actionsOpen, note?.id, drawerX]);
+
+  useEffect(() => {
+    if (actionsOpen || !actionsMounted) return;
+    const token = ++drawerToken.current;
+    const anim = Animated.timing(drawerX, {
+      toValue: 0,
+      duration: 200,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    });
+    anim.start(({ finished }) => {
+      if (!finished || drawerToken.current !== token) return;
+      setActionsMounted(false);
+      const fn = pendingAction.current;
+      pendingAction.current = null;
+      fn?.();
+    });
+    return () => anim.stop();
+  }, [actionsOpen, actionsMounted, drawerX]);
+
+  const openActions = () => {
+    if (!note) return;
+    actionsOpenedAt.current = Date.now();
+    setActionsOpen(true);
+  };
+
+  const closeActions = () => setActionsOpen(false);
+
+  const closeActionsFromBackdrop = () => {
+    if (Date.now() - actionsOpenedAt.current < 400) return;
+    setActionsOpen(false);
+  };
+
+  const runAction = (fn: () => void) => {
+    pendingAction.current = fn;
+    setActionsOpen(false);
+  };
+
+  const playDrawerIn = () => {
+    Animated.timing(drawerX, {
+      toValue: 1,
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
   };
 
   const closeRemark = () => {
@@ -356,13 +405,31 @@ true;
     latestNoteRef.current = updated;
     onUpdated?.(updated);
     inject(extrasDataJs(updated));
-    inject(toastJs(okText));
+    if (okText) inject(toastJs(okText));
   };
 
-  const handleAddHighlight = (media: string, time: number) =>
+  const thumbFilledKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!note) return;
+    const missing = (note.highlights ?? []).filter((h) => !h.thumb);
+    if (!missing.length) return;
+    const key = `${note.id}:${missing.map((h) => h.id).join(',')}`;
+    if (thumbFilledKey.current === key) return;
+    thumbFilledKey.current = key;
+    inject(capturePostersJs(missing));
+    enqueue(async (current) => {
+      const updated = await fillMissingHighlightThumbs(current);
+      if (updated) applyUpdate(updated, '');
+    });
+  }, [note]);
+
+  const handleAddHighlight = (media: string, time: number, poster?: string) =>
     enqueue(async (current) => {
       try {
-        applyUpdate(await addHighlight(current, media, time), `已标记 ${formatClock(time)}`);
+        applyUpdate(
+          await addHighlight(current, media, time, poster),
+          `已标记 ${formatClock(time)}`,
+        );
       } catch {
         inject(toastJs('标记失败'));
       }
@@ -429,8 +496,20 @@ true;
         openRemark();
       } else if (data?.type === 'source' && note) {
         openOriginal(note);
+      } else if (data?.type === 'hl-poster' && typeof data.id === 'string') {
+        const poster = typeof data.poster === 'string' ? data.poster : '';
+        enqueue(async (current) => {
+          try {
+            const updated = await attachHighlightPoster(current, String(data.id), poster);
+            if (updated) applyUpdate(updated, '');
+          } catch {}
+        });
       } else if (data?.type === 'hl-add' && typeof data.media === 'string') {
-        handleAddHighlight(data.media, Number(data.time) || 0);
+        handleAddHighlight(
+          data.media,
+          Number(data.time) || 0,
+          typeof data.poster === 'string' ? data.poster : undefined,
+        );
       } else if (data?.type === 'shot-add' && typeof data.media === 'string') {
         handleAddSnapshot(data.media, Number(data.time) || 0);
       } else if (data?.type === 'hl-menu') {
@@ -444,6 +523,7 @@ true;
   const containerBg = lightbox ? '#000' : theme.bg;
 
   return (
+    <>
     <Modal
       visible={!!note}
       animationType="slide"
@@ -513,6 +593,10 @@ true;
             onLoadEnd={() => {
               webRef.current?.injectJavaScript(remarkInjectJs);
               webRef.current?.injectJavaScript(EXTRAS_BOOT_JS + extrasDataJs(note));
+              const missing = (note.highlights ?? []).filter((h) => !h.thumb);
+              if (missing.length) {
+                webRef.current?.injectJavaScript(capturePostersJs(missing));
+              }
             }}
             onMessage={handleMessage}
             setSupportMultipleWindows={false}
@@ -636,8 +720,91 @@ true;
         />
       </SafeAreaView>
     </Modal>
+    <Modal
+      visible={!!note && actionsMounted}
+      transparent
+      animationType="none"
+      onShow={playDrawerIn}
+      onRequestClose={closeActions}
+      statusBarTranslucent
+    >
+      <View style={styles.actionRoot}>
+        <Pressable
+          style={styles.actionBackdropHit}
+          onPress={closeActionsFromBackdrop}
+          accessibilityLabel="关闭菜单"
+        />
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.actionBackdrop, { opacity: drawerX }]}
+        />
+        <Animated.View
+          style={[
+            styles.actionDrawer,
+            {
+              backgroundColor: theme.bg,
+              paddingTop: insets.top + 8,
+              paddingBottom: insets.bottom + 12,
+              transform: [
+                {
+                  translateX: drawerX.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [DRAWER_WIDTH, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          {(
+            [
+              { label: '备注', icon: 'document-text-outline', onPress: openRemark },
+              { label: '标签', icon: 'pricetag-outline', onPress: openTags },
+              { label: '删除', icon: 'trash-outline', onPress: handleDelete, danger: true },
+            ] as const
+          ).map((item) => (
+            <Pressable
+              key={item.label}
+              onPress={() => runAction(item.onPress)}
+              style={({ pressed }) => [
+                styles.actionRow,
+                pressed && { backgroundColor: isDark ? '#2a2a2c' : '#f3f4f6' },
+              ]}
+            >
+              <Ionicons
+                name={item.icon}
+                size={20}
+                color={'danger' in item && item.danger ? '#e23b3b' : theme.text}
+              />
+              <Text
+                style={[
+                  styles.actionLabel,
+                  { color: 'danger' in item && item.danger ? '#e23b3b' : theme.text },
+                ]}
+              >
+                {item.label}
+              </Text>
+            </Pressable>
+          ))}
+          <View style={[styles.actionDivider, { backgroundColor: barBorder }]} />
+          <Pressable
+            onPress={closeActions}
+            style={({ pressed }) => [
+              styles.actionRow,
+              pressed && { backgroundColor: isDark ? '#2a2a2c' : '#f3f4f6' },
+            ]}
+          >
+            <Ionicons name="close" size={20} color={isDark ? '#aaa' : '#666'} />
+            <Text style={[styles.actionLabel, { color: isDark ? '#aaa' : '#666' }]}>取消</Text>
+          </Pressable>
+        </Animated.View>
+      </View>
+    </Modal>
+    </>
   );
 }
+
+const DRAWER_WIDTH = 248;
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -702,6 +869,54 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#1f6feb',
+  },
+  actionRoot: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  actionBackdropHit: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  actionBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  actionDrawer: {
+    width: DRAWER_WIDTH,
+    borderTopLeftRadius: 16,
+    borderBottomLeftRadius: 16,
+    paddingHorizontal: 8,
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    shadowOffset: { width: -4, height: 0 },
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+  },
+  actionLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  actionDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: 6,
+    marginHorizontal: 14,
   },
   remarkReadScroll: {
     flex: 1,
