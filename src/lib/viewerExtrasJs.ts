@@ -261,6 +261,80 @@ export const EXTRAS_BOOT_JS = `
     post({ type: 'lightbox', open: true });
   }
 
+  var LONG_SEC = 20;
+  var playIndex = -1;
+  var pausing = false;
+
+  function slideOf(v) {
+    var n = v;
+    while (n && n !== document.body) {
+      if (n.classList && n.classList.contains('slide')) return n;
+      n = n.parentNode;
+    }
+    return null;
+  }
+
+  function activeIndex() {
+    if (!track || !track.children.length) return 0;
+    var w = track.clientWidth || 1;
+    return Math.max(0, Math.min(track.children.length - 1, Math.round(track.scrollLeft / w)));
+  }
+
+  function videoAt(i) {
+    if (!track) return videos[0] || null;
+    var slide = track.children[i];
+    return slide ? slide.querySelector('video') : null;
+  }
+
+  function playActive() {
+    var i = activeIndex();
+    var current = videoAt(i);
+    pausing = true;
+    videos.forEach(function (v) {
+      if (v !== current) { try { v.pause(); } catch (e) {} }
+    });
+    pausing = false;
+    if (!current) { playIndex = i; return; }
+    if (current.__offnoteHold && i === playIndex) return;
+    playIndex = i;
+    current.__offnoteHold = false;
+    var next = videoAt(i + 1);
+    if (next) next.preload = 'auto';
+    var p;
+    try { p = current.play(); } catch (e) {}
+    if (p && p.then) p.catch(function () {});
+  }
+
+  videos.forEach(function (v) {
+    v.setAttribute('playsinline', '');
+    v.addEventListener('pause', function () {
+      if (pausing) return;
+      var slide = slideOf(v);
+      var i = slide && track ? Array.prototype.indexOf.call(track.children, slide) : 0;
+      if (i === activeIndex()) v.__offnoteHold = true;
+    });
+    v.addEventListener('play', function () { v.__offnoteHold = false; });
+    v.addEventListener('ended', function () {
+      if (!track || videos.length < 2) return;
+      var dur = Number(v.duration);
+      if (!(dur > 0) || dur > LONG_SEC) return;
+      var slide = slideOf(v);
+      if (!slide) return;
+      var i = Array.prototype.indexOf.call(track.children, slide);
+      if (i !== activeIndex() || i + 1 >= track.children.length) return;
+      track.scrollTo({ left: (i + 1) * track.clientWidth, behavior: 'smooth' });
+    });
+  });
+
+  if (track) {
+    var playTimer;
+    track.addEventListener('scroll', function () {
+      clearTimeout(playTimer);
+      playTimer = setTimeout(playActive, 80);
+    });
+  }
+  setTimeout(playActive, 250);
+
   window.__offnoteExtras = function (data) {
     data = data || {};
     var hls = data.highlights || [], shots = data.snapshots || [];

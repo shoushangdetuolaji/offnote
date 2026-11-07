@@ -373,8 +373,8 @@ export type PublishInfo = {
 };
 
 /**
- * 卡片展示和排序用的时间：发布时间优先，拿不到再用保存时间。
- * 老 IG 笔记没存 publishedAt，从标题/作者/文案里的 "on October 19, 2026" 现解析。
+ * 卡片上显示的时间：发布时间优先，拿不到再用保存时间。
+ * 列表顺序不看这个，按收录时间 createdAt 排。
  */
 export function notePublishInfo(note: Note): PublishInfo {
   if (note.xhs?.publishTime) {

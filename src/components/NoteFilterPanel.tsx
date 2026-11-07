@@ -29,8 +29,8 @@ const SOURCE_OPTIONS: Array<{ key: NoteFilter['source']; label: string }> = [
 ];
 
 const SORT_OPTIONS: Array<{ key: NoteFilter['sort']; label: string }> = [
-  { key: 'newest', label: '最新发布' },
-  { key: 'oldest', label: '最早发布' },
+  { key: 'newest', label: '最新收录' },
+  { key: 'oldest', label: '最早收录' },
 ];
 
 export default function NoteFilterPanel({
@@ -86,7 +86,7 @@ export default function NoteFilterPanel({
           ))}
         </View>
 
-        <Text style={styles.sectionTitle}>发布时间</Text>
+        <Text style={styles.sectionTitle}>收录时间</Text>
         <View style={styles.grid}>
           {SORT_OPTIONS.map((o) => (
             <Option

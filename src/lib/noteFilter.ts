@@ -1,4 +1,4 @@
-import { notePublishInfo, type Note, type NoteSource } from './notes';
+import type { Note, NoteSource } from './notes';
 import { tagKey } from './tags';
 
 /** 分类筛选的保留值；其余取值为分类 id */
@@ -67,7 +67,7 @@ function matchesQuery(n: Note, q: string): boolean {
   return hay.includes(q);
 }
 
-/** 按 分类 / 来源 / 标签（任一）/ 关键词 过滤，再按发布时间排序 */
+/** 按 分类 / 来源 / 标签（任一）/ 关键词 过滤，再按收录时间排序。卡片上显示的仍是发布时间。 */
 export function applyNoteFilter(
   notes: Note[],
   filter: NoteFilter,
@@ -89,8 +89,6 @@ export function applyNoteFilter(
     }
     return matchesQuery(n, q);
   });
-  // 发布时间优先，没有的退回保存时间
   const dir = filter.sort === 'oldest' ? 1 : -1;
-  const ts = new Map(result.map((n) => [n.id, notePublishInfo(n).time]));
-  return result.sort((a, b) => (ts.get(a.id)! - ts.get(b.id)!) * dir);
+  return result.sort((a, b) => (a.createdAt - b.createdAt) * dir);
 }

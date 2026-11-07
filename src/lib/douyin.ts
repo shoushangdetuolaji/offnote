@@ -1,13 +1,18 @@
 import type { XhsExtra } from './xhsExtra';
 
-/** 用手机 UA 打开分享链接，会落到 iesdouyin.com 的分享页（服务端渲染，带 _ROUTER_DATA） */
-export const DOUYIN_UA =
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+/** 电脑版 Chrome。手机 UA 会落到只有静图的手机网页，图集里的视频 source 抓不到 */
+export const DOUYIN_DESKTOP_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 /** 下载视频/图片时带上，部分 CDN 会校验 UA 和 Referer */
 export const DOUYIN_MEDIA_HEADERS: Record<string, string> = {
-  'User-Agent': DOUYIN_UA,
+  'User-Agent': DOUYIN_DESKTOP_UA,
   Referer: 'https://www.douyin.com/',
+};
+
+export type DouyinMedia = {
+  kind: 'video' | 'image';
+  url: string;
 };
 
 /** WebView 注入脚本抓到的数据 */
@@ -20,6 +25,8 @@ export type DouyinPayload = {
   authorAvatar?: string;
   cover?: string;
   images: string[];
+  /** 图集里每一页：实况/动图是视频，普通页是图片 */
+  media?: DouyinMedia[];
   videoUrl?: string;
   /** 秒级时间戳 */
   createTime?: number;
@@ -93,7 +100,7 @@ export async function resolveDouyinWebUrl(url: string): Promise<string> {
   if (direct) return direct;
   try {
     const resp = await fetch(url, {
-      headers: { 'User-Agent': DOUYIN_UA },
+      headers: { 'User-Agent': DOUYIN_DESKTOP_UA },
       redirect: 'follow',
     });
     return toDouyinWebUrl(resp.url) ?? url;

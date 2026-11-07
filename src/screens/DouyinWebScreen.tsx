@@ -21,8 +21,8 @@ import SaveProgressOverlay, {
 import { listCategories, type Category } from '../lib/categories';
 import {
   buildDouyinExtra,
+  DOUYIN_DESKTOP_UA,
   DOUYIN_MEDIA_HEADERS,
-  DOUYIN_UA,
   resolveDouyinWebUrl,
   toDouyinWebUrl,
   suggestDouyinName,
@@ -37,10 +37,45 @@ type Props = {
 };
 
 /**
- * 页面加载前注入：监听页面自己发出的 fetch / XHR，把带作品信息的 JSON 响应留一份。
- * 抖音分享页已不在 SSR 里返回作品数据，而是前端带签名去请求；我们只读取页面
- * 已经拿到的响应，不自己构造请求。
+ * 页面加载前注入：先伪装成电脑浏览器，再监听页面自己发出的 fetch / XHR。
+ * 手机 UA 会打开只有静图的手机版，图集里的 video/source 不会出现。
  */
+const DESKTOP_SPOOF_JS = `
+(function () {
+  var ua = ${JSON.stringify(DOUYIN_DESKTOP_UA)};
+  function force(obj, key, val) {
+    try {
+      Object.defineProperty(obj, key, { configurable: true, get: function () { return val; } });
+    } catch (e) {}
+  }
+  force(navigator, 'userAgent', ua);
+  force(navigator, 'appVersion', ua.replace('Mozilla/', ''));
+  force(navigator, 'platform', 'Win32');
+  force(navigator, 'vendor', 'Google Inc.');
+  force(navigator, 'maxTouchPoints', 0);
+  force(navigator, 'userAgentData', {
+    mobile: false,
+    platform: 'Windows',
+    brands: [
+      { brand: 'Chromium', version: '131' },
+      { brand: 'Google Chrome', version: '131' },
+    ],
+    getHighEntropyValues: function () {
+      return Promise.resolve({
+        mobile: false,
+        platform: 'Windows',
+        platformVersion: '15.0.0',
+        architecture: 'x86',
+        bitness: '64',
+        model: '',
+        uaFullVersion: '131.0.0.0',
+      });
+    },
+  });
+})();
+true;
+`;
+
 const HOOK_JS = `
 (function () {
   if (window.__offnoteHooked) return;
@@ -124,9 +159,10 @@ const GRAB_JS = `
   var tries = 0;
   var timer = setInterval(function () {
     tries++;
-    var got = findItem(capturedRoot());
+    var got = pickItem();
     if (!got && tries >= 6 && maybeSwitchToNote()) { clearInterval(timer); return; }
-    if (got || document.querySelector('video') || tries >= 30) {
+    // 地址里已经有作品 id 时，不要因为推荐区的 video 就提前抓
+    if (got || (!pageAwemeId() && document.querySelector('video')) || tries >= 40) {
       clearInterval(timer);
       setTimeout(function () {
         grab(false);
@@ -145,10 +181,44 @@ const GRAB_JS = `
     return null;
   }
 
+  function pageAwemeId() {
+    var parts = (location.pathname || '').split('/');
+    for (var i = 0; i < parts.length; i++) {
+      var kind = parts[i];
+      var id = parts[i + 1] || '';
+      if ((kind === 'video' || kind === 'note' || kind === 'slides') && /^[0-9]+$/.test(id)) return id;
+    }
+    var search = location.search || '';
+    var key = 'modal_id=';
+    var at = search.indexOf(key);
+    if (at < 0) return '';
+    var rest = search.slice(at + key.length);
+    var num = '';
+    for (var j = 0; j < rest.length; j++) {
+      var c = rest.charAt(j);
+      if (c >= '0' && c <= '9') num += c;
+      else break;
+    }
+    return num;
+  }
+
   function isItem(x) {
     return !!x && typeof x === 'object' && !Array.isArray(x) &&
       (x.aweme_id != null || x.awemeId != null) &&
       (x.video || x.images || x.desc != null);
+  }
+
+  function idOf(node) {
+    return String(node.aweme_id || node.awemeId || node.group_id_str || node.groupIdStr || '');
+  }
+
+  function isRich(node) {
+    return !!(
+      node.video ||
+      (node.images && node.images.length) ||
+      (node.image_post_info && node.image_post_info.images && node.image_post_info.images.length) ||
+      (node.imagePostInfo && node.imagePostInfo.images && node.imagePostInfo.images.length)
+    );
   }
 
   function capturedRoot() {
@@ -156,12 +226,16 @@ const GRAB_JS = `
     return c && c.length ? c.slice().reverse() : null;
   }
 
-  // 广度优先，优先返回带视频或图片的作品对象
+  // 只认地址里的作品。电脑版旁边的推荐也带 aweme_id，不能拿第一个。
   function findItem(root) {
     if (!root || typeof root !== 'object') return null;
+    var want = pageAwemeId();
     var queue = [[root, 0]];
     var seen = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
-    var fallback = null;
+    var matchRich = null;
+    var match = null;
+    var anyRich = null;
+    var any = null;
     var steps = 0;
     while (queue.length && steps < 30000) {
       steps++;
@@ -170,8 +244,14 @@ const GRAB_JS = `
       if (!node || typeof node !== 'object' || depth > 12) continue;
       if (seen) { if (seen.has(node)) continue; seen.add(node); }
       if (isItem(node)) {
-        if (node.video || (node.images && node.images.length)) return node;
-        if (!fallback) fallback = node;
+        var rich = isRich(node);
+        if (want && idOf(node) === want) {
+          if (rich) matchRich = matchRich || node;
+          else match = match || node;
+        } else if (!want) {
+          if (rich) anyRich = anyRich || node;
+          else any = any || node;
+        }
       }
       if (Array.isArray(node)) {
         for (var i = 0; i < node.length; i++) queue.push([node[i], depth + 1]);
@@ -181,7 +261,25 @@ const GRAB_JS = `
         }
       }
     }
-    return fallback;
+    if (want) return matchRich || match;
+    return anyRich || any;
+  }
+
+  function scoreItem(node) {
+    if (!node) return 0;
+    var n = node.desc ? 1 : 0;
+    if (node.images && node.images.length) n += 10 + node.images.length;
+    if (node.video) n += 5;
+    var post = node.image_post_info || node.imagePostInfo;
+    if (post && post.images && post.images.length) n += 10 + post.images.length;
+    return n;
+  }
+
+  function pickItem() {
+    var a = findItem(capturedRoot());
+    var b = findItem(getRoot());
+    if (scoreItem(b) > scoreItem(a)) return b;
+    return a || b;
   }
 
   function urlOf(obj, preferJpeg) {
@@ -196,18 +294,124 @@ const GRAB_JS = `
     return list[0];
   }
 
+  function extName(u) {
+    var path = String(u || '').split('?')[0].split('#')[0].toLowerCase();
+    var slash = path.lastIndexOf('/');
+    var name = slash >= 0 ? path.slice(slash + 1) : path;
+    var dot = name.lastIndexOf('.');
+    return dot >= 0 ? name.slice(dot + 1) : '';
+  }
+
+  function playUrl(video) {
+    if (!video || typeof video !== 'object') return '';
+    var rates = video.bit_rate || video.bitRate || [];
+    var best = '';
+    var bestBr = -1;
+    for (var i = 0; i < rates.length; i++) {
+      var rate = rates[i] || {};
+      var u = urlOf(rate.play_addr || rate.playAddr);
+      var br = Number(rate.bit_rate || rate.bitRate || 0);
+      if (u && br >= bestBr) { best = u; bestBr = br; }
+    }
+    if (best) return best;
+    return urlOf(video.play_addr || video.playAddr) || urlOf(video.download_addr || video.downloadAddr) || '';
+  }
+
+  function stillOf(img) {
+    var lists = [];
+    function add(obj) {
+      if (!obj) return;
+      var groups = [obj.url_list, obj.urlList, obj.download_url_list, obj.downloadUrlList];
+      for (var g = 0; g < groups.length; g++) {
+        var list = groups[g];
+        if (!Array.isArray(list)) continue;
+        for (var i = 0; i < list.length; i++) {
+          if (typeof list[i] === 'string' && list[i]) lists.push(list[i]);
+        }
+      }
+    }
+    add(img);
+    add(img.display_image || img.displayImage);
+    var gif = '', webp = '', jpeg = '', other = '';
+    for (var n = 0; n < lists.length; n++) {
+      var ext = extName(lists[n]);
+      if (ext === 'gif' && !gif) gif = lists[n];
+      else if (ext === 'webp' && !webp) webp = lists[n];
+      else if ((ext === 'jpg' || ext === 'jpeg') && !jpeg) jpeg = lists[n];
+      else if (!other) other = lists[n];
+    }
+    if (gif) return gif;
+    if ((img.is_animated || img.animated || img.isAnimated) && webp) return webp;
+    return jpeg || webp || other || urlOf(img, true) || '';
+  }
+
+  function slideVideo(img) {
+    if (!img || typeof img !== 'object') return '';
+    var live = img.video || img.video_info || img.videoInfo || img.live_photo || img.livePhoto || img.live_photo_info || img.livePhotoInfo;
+    return playUrl(live);
+  }
+
+  function bestSource(v) {
+    var list = [];
+    var current = v.currentSrc || v.src || '';
+    if (current && current.indexOf('blob:') !== 0 && current.indexOf('http') === 0) list.push(current);
+    var sources = v.querySelectorAll('source');
+    for (var i = 0; i < sources.length; i++) {
+      var s = sources[i].getAttribute('src') || '';
+      if (s && s.indexOf('blob:') !== 0 && s.indexOf('http') === 0) list.push(s);
+    }
+    for (var j = 0; j < list.length; j++) {
+      if (list[j].indexOf('douyinvod.com') >= 0 || list[j].indexOf('/video/tos/') >= 0) return list[j];
+    }
+    return list[0] || '';
+  }
+
+  function domVideos() {
+    var out = [];
+    var seen = {};
+    var nodes = document.querySelectorAll('video');
+    for (var i = 0; i < nodes.length; i++) {
+      var u = bestSource(nodes[i]);
+      if (!u || seen[u]) continue;
+      seen[u] = 1;
+      out.push(u);
+    }
+    return out;
+  }
+
   function fromItem(item) {
     var author = item.author || {};
     var stats = item.statistics || item.stats || {};
     var images = [];
-    if (Array.isArray(item.images)) {
-      item.images.forEach(function (img) {
-        var u = urlOf(img, true);
-        if (u) images.push(u);
-      });
+    var media = [];
+    var slideCover = '';
+    var slides = Array.isArray(item.images) ? item.images : [];
+    if (!slides.length) {
+      var post = item.image_post_info || item.imagePostInfo;
+      if (post && Array.isArray(post.images)) slides = post.images;
+    }
+    for (var i = 0; i < slides.length; i++) {
+      var img = slides[i] || {};
+      var vu = slideVideo(img);
+      if (vu) {
+        media.push({ kind: 'video', url: vu });
+        if (!slideCover) {
+          var lv = img.video || img.live_photo || img.livePhoto || {};
+          slideCover = urlOf(lv.cover || lv.origin_cover || lv.originCover, true) || stillOf(img);
+        }
+        continue;
+      }
+      var still = stillOf(img);
+      if (!still) continue;
+      media.push({ kind: 'image', url: still });
+      images.push(still);
     }
     var video = item.video || {};
-    var videoUrl = images.length ? '' : (urlOf(video.play_addr || video.playAddr) || '');
+    var videoUrl = '';
+    if (!media.length) {
+      videoUrl = playUrl(video);
+      if (videoUrl) media.push({ kind: 'video', url: videoUrl });
+    }
     var topics = [];
     (item.text_extra || item.textExtra || []).forEach(function (t) {
       var name = t && (t.hashtag_name || t.hashtagName);
@@ -218,8 +422,9 @@ const GRAB_JS = `
       desc: item.desc || '',
       author: author.nickname || '',
       authorAvatar: urlOf(author.avatar_medium || author.avatar_thumb || author.avatar_larger || author.avatarThumb),
-      cover: urlOf(video.origin_cover || video.cover || video.originCover) || images[0] || '',
+      cover: urlOf(video.origin_cover || video.cover || video.originCover, true) || slideCover || images[0] || '',
       images: images,
+      media: media,
       videoUrl: videoUrl,
       createTime: item.create_time || item.createTime,
       topics: topics,
@@ -234,28 +439,51 @@ const GRAB_JS = `
       var el = document.querySelector('meta[property="' + k + '"], meta[name="' + k + '"]');
       return el ? el.getAttribute('content') || '' : '';
     }
+    var vids = domVideos();
     var v = document.querySelector('video');
-    var src = v ? (v.currentSrc || v.src || '') : '';
-    if (/^blob:/.test(src)) src = '';
     return {
       desc: meta('og:description') || meta('description') || document.title || '',
       author: '',
       authorAvatar: '',
       cover: meta('og:image') || (v && v.poster) || '',
       images: [],
-      videoUrl: src,
+      media: vids.map(function (u) { return { kind: 'video', url: u }; }),
+      videoUrl: vids.length === 1 ? vids[0] : '',
       topics: [],
     };
   }
 
+  function useDomVideos(data) {
+    var vids = domVideos();
+    if (!vids.length) return;
+    var jsonVideos = 0;
+    (data.media || []).forEach(function (m) { if (m && m.kind === 'video') jsonVideos++; });
+    if (jsonVideos) return;
+    var stills = (data.images || []).length;
+    if (stills && vids.length < stills) return;
+    data.media = vids.map(function (u) { return { kind: 'video', url: u }; });
+    data.images = [];
+    data.videoUrl = vids.length === 1 ? vids[0] : '';
+    if (!data.cover) {
+      var v = document.querySelector('video');
+      if (v && v.poster) data.cover = v.poster;
+    }
+  }
+
   var lastSent = '';
   function grab(force) {
-    var item = findItem(capturedRoot()) || findItem(getRoot());
+    var item = pickItem();
+    // 知道作品 id 但数据还没到时，不用推荐区里的视频充数
+    if (!item && pageAwemeId()) return;
     var data = item ? fromItem(item) : fromDom();
-    if (item && !data.videoUrl && !data.images.length) {
+    if (!data.media) data.media = [];
+    if (item && !data.media.length && !pageAwemeId()) {
       var dom = fromDom();
+      data.media = dom.media || [];
       data.videoUrl = dom.videoUrl;
+      if (!data.cover) data.cover = dom.cover;
     }
+    if (!pageAwemeId()) useDomVideos(data);
     try {
       var key = JSON.stringify(data);
       if (!force && key === lastSent) return;
@@ -269,7 +497,7 @@ const GRAB_JS = `
 
   function diag() {
     var root = getRoot();
-    var item = findItem(capturedRoot()) || findItem(root);
+    var item = pickItem();
     var v = document.querySelector('video');
     return {
       apis: window.__offnoteApis || [],
@@ -283,6 +511,8 @@ const GRAB_JS = `
       itemKeys: item ? Object.keys(item).slice(0, 80) : [],
       itemSample: item ? JSON.stringify(item).slice(0, 6000) : '',
       videoSrc: v ? (v.currentSrc || v.src || '') : '',
+      sourceCount: v ? v.querySelectorAll('source').length : 0,
+      domVideos: domVideos(),
       parsed: item ? fromItem(item) : fromDom(),
     };
   }
@@ -291,8 +521,28 @@ true;
 `;
 
 function inferExtFromUrl(u: string, fallback: string): string {
-  const m = u.split('?')[0].match(/\.(jpe?g|png|webp|heic|mp4|mov)$/i);
+  const m = u.split('?')[0].match(/\.(jpe?g|png|webp|gif|heic|mp4|mov|webm)$/i);
   return (m ? m[1] : fallback).toLowerCase();
+}
+
+function payloadMedia(p: DouyinPayload): { kind: 'video' | 'image'; url: string }[] {
+  const media = (p.media ?? []).filter(
+    (m) => m && (m.kind === 'video' || m.kind === 'image') && !!m.url,
+  );
+  if (media.length) return media;
+  const out: { kind: 'video' | 'image'; url: string }[] = [];
+  if (p.videoUrl) out.push({ kind: 'video', url: p.videoUrl });
+  for (const img of p.images) out.push({ kind: 'image', url: img });
+  return out;
+}
+
+function mediaLabel(list: { kind: string }[]): string {
+  const videos = list.filter((m) => m.kind === 'video').length;
+  const images = list.filter((m) => m.kind === 'image').length;
+  const parts: string[] = [];
+  if (videos) parts.push(videos === 1 && !images ? '视频' : `${videos} 个视频`);
+  if (images) parts.push(`${images} 张图`);
+  return parts.join(' · ');
 }
 
 export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) {
@@ -336,7 +586,8 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
     [],
   );
 
-  const hasMedia = !!payload && (!!payload.videoUrl || payload.images.length > 0);
+  const mediaItems = payload ? payloadMedia(payload) : [];
+  const hasMedia = mediaItems.length > 0;
 
   const openRenameFromPending = () => {
     if (!pendingSaveRef.current) return;
@@ -350,7 +601,19 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
     try {
       const data = JSON.parse(e.nativeEvent.data ?? '{}');
       if (data?.type === 'douyin') {
-        setPayload({ ...data, images: Array.isArray(data.images) ? data.images : [] });
+        const media = Array.isArray(data.media)
+          ? data.media.filter(
+              (m: { kind?: string; url?: string }) =>
+                !!m &&
+                typeof m.url === 'string' &&
+                (m.kind === 'video' || m.kind === 'image'),
+            )
+          : undefined;
+        setPayload({
+          ...data,
+          images: Array.isArray(data.images) ? data.images : [],
+          media,
+        });
         if (data.forced) openRenameFromPending();
       } else if (data?.type === 'douyin-diag') {
         const text = JSON.stringify(data.data, null, 2);
@@ -383,7 +646,7 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
     [payload],
   );
   const suggestedName = suggestDouyinName(payload);
-  const hintExt = payload?.videoUrl ? 'mp4' : 'jpg';
+  const hintExt = mediaItems.some((m) => m.kind === 'video') ? 'mp4' : 'jpg';
 
   const handleConfirmName = async (
     finalName: string,
@@ -395,25 +658,11 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
     setShowRename(false);
     setProgress({ title: '正在下载', detail: '准备中…', fraction: 0 });
 
-    const items: MediaInput[] = [];
-    if (payload.videoUrl) {
-      items.push({
-        kind: 'video',
-        hintExt: inferExtFromUrl(payload.videoUrl, 'mp4'),
-        source: {
-          type: 'remote',
-          url: payload.videoUrl,
-          headers: DOUYIN_MEDIA_HEADERS,
-        },
-      });
-    }
-    for (const img of payload.images) {
-      items.push({
-        kind: 'image',
-        hintExt: inferExtFromUrl(img, 'jpg'),
-        source: { type: 'remote', url: img, headers: DOUYIN_MEDIA_HEADERS },
-      });
-    }
+    const items: MediaInput[] = mediaItems.map((m) => ({
+      kind: m.kind,
+      hintExt: inferExtFromUrl(m.url, m.kind === 'video' ? 'mp4' : 'jpg'),
+      source: { type: 'remote', url: m.url, headers: DOUYIN_MEDIA_HEADERS },
+    }));
 
     if (items.length === 0) {
       setProgress(null);
@@ -503,8 +752,11 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
           <View style={styles.webviewWrapper}>
             <WebView
               ref={webRef}
-              source={{ uri: webUrl }}
-              injectedJavaScriptBeforeContentLoaded={HOOK_JS}
+              source={{
+                uri: webUrl,
+                headers: { 'User-Agent': DOUYIN_DESKTOP_UA },
+              }}
+              injectedJavaScriptBeforeContentLoaded={DESKTOP_SPOOF_JS + HOOK_JS}
               injectedJavaScript={GRAB_JS}
               onMessage={handleMessage}
               onLoadStart={() => setLoading(true)}
@@ -515,13 +767,12 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
               thirdPartyCookiesEnabled
               allowsInlineMediaPlayback
               allowsBackForwardNavigationGestures
-              // 分享页会尝试用 snssdk1128:// 等协议唤起抖音 App，拦掉只留网页
-              userAgent={DOUYIN_UA}
+              userAgent={DOUYIN_DESKTOP_UA}
               originWhitelist={['http://*', 'https://*', 'about:*']}
               onShouldStartLoadWithRequest={(req) => {
                 if (!/^(https?:|about:)/i.test(req.url)) return false;
-                // 万一还是跳到了 App 分享页，改走网页端链接
-                if (/iesdouyin\.com\/share\//i.test(req.url)) {
+                // 手机版网页没有 video/source，拉回电脑版笔记页
+                if (/m\.douyin\.com|iesdouyin\.com\/share\//i.test(req.url)) {
                   const web = toDouyinWebUrl(req.url);
                   if (web && web !== webUrl) {
                     setWebUrl(web);
@@ -549,7 +800,7 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
               >
                 <Text style={styles.readyText}>
                   {hasMedia
-                    ? `已抓到 · ${payload.videoUrl ? '视频' : `${payload.images.length} 图`}`
+                    ? `已抓到 · ${mediaLabel(mediaItems)}`
                     : '没抓到视频/图片（长按诊断）'}
                 </Text>
               </Pressable>
