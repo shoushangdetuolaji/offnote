@@ -294,7 +294,11 @@ export const EXTRAS_BOOT_JS = `
       if (v !== current) { try { v.pause(); } catch (e) {} }
     });
     pausing = false;
-    if (!current) { playIndex = i; return; }
+    if (!current) {
+      playIndex = i;
+      if (bgm && !bgm.__offnoteHold) syncBgm(true);
+      return;
+    }
     if (current.__offnoteHold && i === playIndex) return;
     playIndex = i;
     current.__offnoteHold = false;
@@ -303,6 +307,23 @@ export const EXTRAS_BOOT_JS = `
     var p;
     try { p = current.play(); } catch (e) {}
     if (p && p.then) p.catch(function () {});
+    syncBgm(true);
+  }
+
+  var bgm = document.getElementById('offnote-bgm');
+  function syncBgm(on) {
+    if (!bgm) return;
+    if (on) {
+      var p;
+      try { p = bgm.play(); } catch (e) {}
+      if (p && p.then) p.catch(function () {});
+    } else {
+      try { bgm.pause(); } catch (e) {}
+    }
+  }
+  if (bgm) {
+    bgm.loop = true;
+    videos.forEach(function (v) { v.muted = true; });
   }
 
   videos.forEach(function (v) {
@@ -311,9 +332,17 @@ export const EXTRAS_BOOT_JS = `
       if (pausing) return;
       var slide = slideOf(v);
       var i = slide && track ? Array.prototype.indexOf.call(track.children, slide) : 0;
-      if (i === activeIndex()) v.__offnoteHold = true;
+      if (i === activeIndex()) {
+        v.__offnoteHold = true;
+        if (bgm) bgm.__offnoteHold = true;
+        syncBgm(false);
+      }
     });
-    v.addEventListener('play', function () { v.__offnoteHold = false; });
+    v.addEventListener('play', function () {
+      v.__offnoteHold = false;
+      if (bgm) bgm.__offnoteHold = false;
+      syncBgm(true);
+    });
     v.addEventListener('ended', function () {
       if (!track || videos.length < 2) return;
       var dur = Number(v.duration);

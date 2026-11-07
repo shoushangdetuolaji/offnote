@@ -27,6 +27,8 @@ export type DouyinPayload = {
   images: string[];
   /** 图集里每一页：实况/动图是视频，普通页是图片 */
   media?: DouyinMedia[];
+  /** 图集轮播共用的背景音乐，画面本身往往没有声音 */
+  audioUrl?: string;
   videoUrl?: string;
   /** 秒级时间戳 */
   createTime?: number;

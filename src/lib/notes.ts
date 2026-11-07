@@ -68,6 +68,8 @@ export type Note = {
   snapshots?: Snapshot[];
   /** 原帖发布时间（IG 只有日期）；小红书/抖音的在 xhs.publishTime */
   publishedAt?: number;
+  /** 图集共用的背景音乐，相对笔记目录，如 bgm.mp4 */
+  audioFilename?: string;
   /** 生成 index.html 时的模板版本，见 HTML_VERSION */
   htmlVersion?: number;
   dirUri: string;
@@ -128,6 +130,8 @@ export type CreateNoteInput = {
   onItemProgress?: (index: number, total: number, fraction: number) => void;
   /** 评论图片/头像下载进度 */
   onExtraProgress?: (done: number, total: number) => void;
+  /** 图集轮播共用的背景音乐。画面本身可能没有声音 */
+  bgm?: { url: string; headers?: Record<string, string>; hintExt?: string };
 };
 
 export type CreateNoteResult = {
@@ -193,6 +197,23 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     if (firstImage) thumbnailFilename = firstImage.filename;
   }
 
+  let audioFilename: string | undefined;
+  if (input.bgm?.url) {
+    try {
+      const ext = extOf(input.bgm.hintExt ?? '', 'mp4');
+      const name = `bgm.${ext}`;
+      const file = new File(dir, name);
+      if (file.exists) file.delete();
+      const task = File.createDownloadTask(input.bgm.url, file, {
+        headers: input.bgm.headers,
+      });
+      await task.downloadAsync();
+      audioFilename = name;
+    } catch {
+      audioFilename = undefined;
+    }
+  }
+
   let xhs: XhsExtra | undefined;
   if (input.xhs) {
     try {
@@ -219,6 +240,7 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     thumbnailFilename,
     xhs,
     publishedAt: input.metadata?.publishTime,
+    audioFilename,
     htmlVersion: HTML_VERSION,
     dirUri: dir.uri,
     indexUri: new File(dir, 'index.html').uri,
@@ -235,6 +257,7 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     createdAt,
     source: note.source,
     xhs,
+    audioFilename,
   });
 
   const indexFile = new File(dir, 'index.html');
@@ -354,6 +377,7 @@ export async function updateNote(
       createdAt: merged.createdAt,
       source: merged.source,
       xhs: merged.xhs,
+      audioFilename: merged.audioFilename,
     });
     const indexFile = new File(dir, 'index.html');
     indexFile.writeSync(html, { encoding: 'utf8' });

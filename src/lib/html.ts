@@ -36,6 +36,8 @@ export type RenderInput = {
   createdAt: number;
   source?: NoteSource;
   xhs?: XhsExtra;
+  /** 图集背景音乐文件名 */
+  audioFilename?: string;
 };
 
 // ---------- 小红书样式 ----------
@@ -309,6 +311,9 @@ export function renderNoteHtml(input: RenderInput): string {
   const hasComments = input.source === 'rednote';
 
   const mediaBlock = total > 1 ? carouselHtml(input) : singleMediaHtml(input);
+  const audioBlock = input.audioFilename
+    ? `<audio id="offnote-bgm" src="${escape(input.audioFilename)}" loop preload="auto"></audio>`
+    : '';
 
   const sourceLine = input.sourceUrl
     ? `<a class="source" href="${escape(input.sourceUrl)}" target="_blank" rel="noreferrer">查看原帖</a>`
@@ -336,6 +341,7 @@ export function renderNoteHtml(input: RenderInput): string {
   html, body { margin: 0; padding: 0; background: #0d0d0e; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.55; }
   .wrap { max-width: 720px; margin: 0 auto; padding: 16px 16px 48px; }
   .author { font-weight: 600; font-size: 15px; color: #fff; margin-bottom: 10px; }
+  #offnote-bgm { position: absolute; width: 0; height: 0; opacity: 0; }
 
   /* Single media */
   .single { background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 12px; }
@@ -518,6 +524,7 @@ export function renderNoteHtml(input: RenderInput): string {
   <div class="wrap">
     ${isXhs ? xhsHeaderHtml(author, input.xhs) : author ? `<div class="author">@${escape(author)}</div>` : ''}
     ${mediaBlock}
+    ${audioBlock}
     ${isXhs ? xhsContentHtml(input) : caption ? `<div class="caption">${paragraphs(caption)}</div>` : ''}
     <div class="meta">
       <span>${isXhs ? '保存于 ' : ''}${escape(dateStr)}</span>

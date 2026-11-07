@@ -408,9 +408,23 @@ const GRAB_JS = `
     }
     var video = item.video || {};
     var videoUrl = '';
+    var audioUrl = '';
     if (!media.length) {
       videoUrl = playUrl(video);
       if (videoUrl) media.push({ kind: 'video', url: videoUrl });
+    } else if (slides.length > 1) {
+      var bgm = playUrl(video);
+      if (!bgm) {
+        var music = item.music || {};
+        bgm = urlOf(music.play_url || music.playUrl) || '';
+      }
+      if (bgm && bgm.indexOf('http') === 0) {
+        var duplicated = false;
+        for (var mi = 0; mi < media.length; mi++) {
+          if (media[mi].url === bgm) duplicated = true;
+        }
+        if (!duplicated) audioUrl = bgm;
+      }
     }
     var topics = [];
     (item.text_extra || item.textExtra || []).forEach(function (t) {
@@ -426,6 +440,7 @@ const GRAB_JS = `
       images: images,
       media: media,
       videoUrl: videoUrl,
+      audioUrl: audioUrl,
       createTime: item.create_time || item.createTime,
       topics: topics,
       diggCount: stats.digg_count != null ? stats.digg_count : stats.diggCount,
@@ -686,6 +701,14 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
         thumbnailUrl: payload.cover || payload.images[0],
       },
       xhs: extra,
+      bgm:
+        payload.audioUrl && items.length > 1
+          ? {
+              url: payload.audioUrl,
+              headers: DOUYIN_MEDIA_HEADERS,
+              hintExt: inferExtFromUrl(payload.audioUrl, 'mp4'),
+            }
+          : undefined,
       // 媒体占 0~95%，头像等附加内容占最后 5%
       onItemProgress: (i, total, f) => {
         const kind = items[i]?.kind === 'video' ? '视频' : '图片';
@@ -800,7 +823,7 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
               >
                 <Text style={styles.readyText}>
                   {hasMedia
-                    ? `已抓到 · ${mediaLabel(mediaItems)}`
+                    ? `已抓到 · ${mediaLabel(mediaItems)}${payload.audioUrl ? ' · 音乐' : ''}`
                     : '没抓到视频/图片（长按诊断）'}
                 </Text>
               </Pressable>
