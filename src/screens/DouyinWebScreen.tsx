@@ -483,8 +483,50 @@ const GRAB_JS = `
   function isAudioUrl(u) {
     u = String(u || '');
     if (u.indexOf('/obj/ies-music') >= 0) return true;
+    // 图文配乐经常是没有后缀的 audio/mp4，放在静态对象而不是视频点播上
+    if (u.indexOf('/obj/tos-cn-ve-') >= 0 && u.indexOf('/video/tos/') < 0 && u.indexOf('douyinvod.com') < 0) return true;
     var path = u.split('?')[0].toLowerCase();
     return path.endsWith('.mp3') || path.endsWith('.m4a') || path.endsWith('.aac');
+  }
+
+  function audioRank(u) {
+    u = String(u || '');
+    var score = 0;
+    var path = u.split('?')[0].toLowerCase();
+    if (path.endsWith('.mp3') || path.endsWith('.m4a') || path.endsWith('.aac')) score += 5;
+    if (u.indexOf('/obj/ies-music') >= 0) score += 3;
+    if (u.indexOf('is_ssr=1') >= 0) score -= 4;
+    return score;
+  }
+
+  function collectAudio(list, addr) {
+    var found = srcList(addr);
+    for (var i = 0; i < found.length; i++) {
+      var u = found[i];
+      if (!u || !isAudioUrl(u) || list.indexOf(u) >= 0) continue;
+      list.push(u);
+    }
+  }
+
+  function bestAudio(list) {
+    var best = '';
+    var bestScore = -999;
+    for (var i = 0; i < list.length; i++) {
+      var score = audioRank(list[i]);
+      if (!best || score > bestScore) { best = list[i]; bestScore = score; }
+    }
+    return best;
+  }
+
+  function domAudio() {
+    var nodes = document.querySelectorAll('audio, video');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var u = el.currentSrc || el.src || el.getAttribute('src') || '';
+      if (u.indexOf('//') === 0) u = 'https:' + u;
+      if (isAudioUrl(u)) return u;
+    }
+    return '';
   }
 
   function domVideos() {
@@ -662,7 +704,17 @@ const GRAB_JS = `
     }
     var video = item.video || {};
     var music = item.music || {};
-    var sharedBgm = playUrl(video) || urlOf(music.play_url || music.playUrl) || '';
+    var itemPlay = playUrl(video);
+    var audioList = [];
+    collectAudio(audioList, music.play_url || music.playUrl);
+    collectAudio(audioList, music);
+    var audioRates = video.bitRateAudioList || video.bit_rate_audio_list || [];
+    for (var ar = 0; ar < audioRates.length; ar++) {
+      var rate = audioRates[ar] || {};
+      collectAudio(audioList, rate.play_addr || rate.playAddr || rate);
+    }
+    collectAudio(audioList, itemPlay);
+    var sharedBgm = bestAudio(audioList);
     // 同一组轮播里静图和视频页夹在一起。有自己的画面就留视频，否则留这一页的图，顺序不变。
     var slots = [];
     var slotAt = {};
@@ -710,15 +762,21 @@ const GRAB_JS = `
     }
     var videoUrl = '';
     var audioUrl = '';
+    var audioUrls = [];
     if (!media.length) {
-      if (sharedBgm && !isAudioUrl(sharedBgm)) {
-        videoUrl = sharedBgm;
-        media.push({ kind: 'video', url: sharedBgm });
+      if (itemPlay && !isAudioUrl(itemPlay)) {
+        videoUrl = itemPlay;
+        media.push({ kind: 'video', url: itemPlay });
       } else if (sharedBgm) {
         audioUrl = sharedBgm;
+        audioUrls = audioList.slice();
       }
-    } else if (sharedBgm && isAudioUrl(sharedBgm) && (images.length > 0 || media.length > 1)) {
-      audioUrl = sharedBgm;
+    } else if (sharedBgm) {
+      var soleVideo = media.length === 1 && media[0].kind === 'video' && !images.length;
+      if (!soleVideo) {
+        audioUrl = sharedBgm;
+        audioUrls = audioList.slice();
+      }
     }
     var topics = [];
     (item.text_extra || item.textExtra || []).forEach(function (t) {
@@ -735,6 +793,7 @@ const GRAB_JS = `
       media: media,
       videoUrl: videoUrl,
       audioUrl: audioUrl,
+      audioUrls: audioUrls,
       createTime: item.create_time || item.createTime,
       topics: topics,
       diggCount: stats.digg_count != null ? stats.digg_count : stats.diggCount,
@@ -823,6 +882,20 @@ const GRAB_JS = `
       data.videoUrl = dom.videoUrl;
       if (!data.cover) data.cover = dom.cover;
     }
+    if (!data.audioUrls) data.audioUrls = data.audioUrl ? [data.audioUrl] : [];
+    var heard = domAudio();
+    var soleClip = data.media.length === 1 && data.media[0] && data.media[0].kind === 'video' && !(data.images && data.images.length);
+    var sameAsSlide = false;
+    for (var ai = 0; ai < data.media.length; ai++) {
+      if (data.media[ai] && data.media[ai].url === heard) sameAsSlide = true;
+    }
+    if (soleClip) {
+      data.audioUrl = '';
+      data.audioUrls = [];
+    } else if (heard && !sameAsSlide && data.audioUrls.indexOf(heard) < 0) {
+      data.audioUrls.push(heard);
+      data.audioUrl = bestAudio(data.audioUrls);
+    }
     if (!pageAwemeId()) useDomVideos(data);
     try {
       var key = JSON.stringify(data);
@@ -861,8 +934,11 @@ true;
 `;
 
 function inferExtFromUrl(u: string, fallback: string): string {
-  const m = u.split('?')[0].match(/\.(jpe?g|png|webp|gif|heic|mp4|mov|webm)$/i);
-  return (m ? m[1] : fallback).toLowerCase();
+  const path = u.split('?')[0].toLowerCase();
+  const m = path.match(/\.(jpe?g|png|webp|gif|heic|mp4|mov|webm|mp3|m4a|aac)$/i);
+  if (m) return m[1].toLowerCase();
+  if (path.indexOf('/obj/tos-cn-ve-') >= 0) return 'm4a';
+  return fallback.toLowerCase();
 }
 
 function payloadMedia(p: DouyinPayload): { kind: 'video' | 'image'; url: string }[] {
@@ -1026,17 +1102,17 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
         thumbnailUrl: payload.cover || payload.images[0],
       },
       xhs: extra,
-      bgm:
-        payload.audioUrl && items.length > 1
-          ? {
-              url: payload.audioUrl,
-              headers: DOUYIN_MEDIA_HEADERS,
-              hintExt: inferExtFromUrl(payload.audioUrl, 'mp4'),
-            }
-          : undefined,
+      bgm: payload.audioUrl
+        ? {
+            url: payload.audioUrl,
+            urls: payload.audioUrls,
+            headers: DOUYIN_MEDIA_HEADERS,
+            hintExt: inferExtFromUrl(payload.audioUrl, 'mp3'),
+          }
+        : undefined,
       // 媒体占 0~95%，头像等附加内容占最后 5%
       onItemProgress: (i, total, f) => {
-        const kind = items[i]?.kind === 'video' ? '视频' : '图片';
+        const kind = i >= items.length ? '音乐' : items[i]?.kind === 'video' ? '视频' : '图片';
         setProgress({
           title: '正在下载',
           detail: total > 1 ? `第 ${i + 1}/${total} 项 · ${kind}` : kind,
@@ -1056,9 +1132,16 @@ export default function DouyinWebScreen({ visible, sourceUrl, onClose }: Props) 
       Alert.alert('保存失败', result.error ?? 'unknown');
       return;
     }
+    const fileCount =
+      (result.note?.media.length ?? 0) + (result.note?.audioFilename ? 1 : 0);
+    const musicNote = payload.audioUrl
+      ? result.note?.audioFilename
+        ? '，含背景音乐'
+        : '，背景音乐没下下来'
+      : '';
     Alert.alert(
       '已保存',
-      `「${titleOnly}」包含 ${result.note?.media.length ?? 0} 个文件`,
+      `「${titleOnly}」包含 ${fileCount} 个文件${musicNote}`,
       [{ text: '关闭', onPress: onClose }],
     );
   };

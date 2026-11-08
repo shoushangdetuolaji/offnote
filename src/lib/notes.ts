@@ -130,8 +130,8 @@ export type CreateNoteInput = {
   onItemProgress?: (index: number, total: number, fraction: number) => void;
   /** 评论图片/头像下载进度 */
   onExtraProgress?: (done: number, total: number) => void;
-  /** 图集轮播共用的背景音乐。画面本身可能没有声音 */
-  bgm?: { url: string; headers?: Record<string, string>; hintExt?: string };
+  /** 图集轮播共用的背景音乐。画面本身可能没有声音。urls 是备用地址 */
+  bgm?: { url: string; urls?: string[]; headers?: Record<string, string>; hintExt?: string };
 };
 
 export type CreateNoteResult = {
@@ -148,6 +148,11 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
   const id = generateNoteId(input.metadata);
   const dir = ensureNoteDir(id);
   const total = input.items.length;
+  const bgmUrls = [
+    ...(input.bgm?.url ? [input.bgm.url] : []),
+    ...(input.bgm?.urls ?? []),
+  ].filter((url, index, all) => !!url && all.indexOf(url) === index);
+  const stepTotal = total + (bgmUrls.length ? 1 : 0);
   const stored: NoteMedia[] = [];
 
   for (let i = 0; i < input.items.length; i++) {
@@ -156,7 +161,7 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
     const filename = total === 1 ? `media.${ext}` : `media-${i + 1}.${ext}`;
     const file = new File(dir, filename);
     // 先报一次「开始第 i 项」：有的 CDN 不返回大小，字节进度回调不会触发
-    input.onItemProgress?.(i, total, 0);
+    input.onItemProgress?.(i, stepTotal, 0);
 
     try {
       if (item.source.type === 'remote') {
@@ -166,7 +171,7 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
           onProgress: ({ bytesWritten, totalBytes }) => {
             const t = totalBytes || 0;
             const fraction = t > 0 ? (bytesWritten || 0) / t : 0;
-            input.onItemProgress?.(i, total, fraction);
+            input.onItemProgress?.(i, stepTotal, fraction);
           },
         });
         await task.downloadAsync();
@@ -198,19 +203,31 @@ export async function createNote(input: CreateNoteInput): Promise<CreateNoteResu
   }
 
   let audioFilename: string | undefined;
-  if (input.bgm?.url) {
-    try {
-      const ext = extOf(input.bgm.hintExt ?? '', 'mp4');
-      const name = `bgm.${ext}`;
-      const file = new File(dir, name);
-      if (file.exists) file.delete();
-      const task = File.createDownloadTask(input.bgm.url, file, {
-        headers: input.bgm.headers,
-      });
-      await task.downloadAsync();
-      audioFilename = name;
-    } catch {
-      audioFilename = undefined;
+  if (bgmUrls.length) {
+    const ext = extOf(input.bgm?.hintExt ?? '', 'mp3');
+    const name = `bgm.${ext}`;
+    const file = new File(dir, name);
+    input.onItemProgress?.(total, stepTotal, 0);
+    for (const url of bgmUrls) {
+      try {
+        if (file.exists) file.delete();
+        const task = File.createDownloadTask(url, file, {
+          headers: input.bgm?.headers,
+          onProgress: ({ bytesWritten, totalBytes }) => {
+            const t = totalBytes || 0;
+            input.onItemProgress?.(total, stepTotal, t > 0 ? (bytesWritten || 0) / t : 0);
+          },
+        });
+        await task.downloadAsync();
+        if (file.exists && (file.size ?? 0) > 1024) {
+          audioFilename = name;
+          input.onItemProgress?.(total, stepTotal, 1);
+          break;
+        }
+        if (file.exists) file.delete();
+      } catch {
+        if (file.exists) file.delete();
+      }
     }
   }
 

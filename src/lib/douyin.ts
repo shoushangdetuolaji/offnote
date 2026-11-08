@@ -29,6 +29,8 @@ export type DouyinPayload = {
   media?: DouyinMedia[];
   /** 图集轮播共用的背景音乐，画面本身往往没有声音 */
   audioUrl?: string;
+  /** 同一条音乐的备用地址，前一个下不下来时接着试 */
+  audioUrls?: string[];
   videoUrl?: string;
   /** 秒级时间戳 */
   createTime?: number;

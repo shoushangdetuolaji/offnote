@@ -12,6 +12,105 @@ import type { Note } from './notes';
  */
 export const EXTRAS_BOOT_JS = `
 (function () {
+  function pageHidden() {
+    return document.hidden || document.visibilityState === 'hidden';
+  }
+  function armBgm() {
+    var bgm = document.getElementById('offnote-bgm');
+    if (!bgm) return;
+    function kick() {
+      if (!bgm.__offnoteWant || bgm.__offnoteBackground || pageHidden()) return;
+      var p;
+      try { p = bgm.play(); } catch (e) {}
+      if (p && p.then) {
+        p.then(function () {
+          document.removeEventListener('touchstart', kick);
+          document.removeEventListener('click', kick);
+        }).catch(function () {});
+      }
+    }
+    if (!bgm.__offnoteBound) {
+      bgm.__offnoteBound = true;
+      bgm.loop = true;
+      bgm.volume = 1;
+      bgm.muted = false;
+      bgm.setAttribute('playsinline', '');
+      bgm.setAttribute('autoplay', '');
+      bgm.addEventListener('pause', function () {
+        if (!bgm.__offnoteWant || bgm.__offnoteBackground || pageHidden()) return;
+        setTimeout(function () {
+          if (!bgm.__offnoteWant || bgm.__offnoteBackground || pageHidden() || !bgm.paused) return;
+          kick();
+        }, 80);
+      });
+      document.addEventListener('touchstart', kick, { passive: true });
+      document.addEventListener('click', kick);
+    }
+    if (bgm.__offnoteBackground || pageHidden()) return;
+    bgm.__offnoteWant = true;
+    kick();
+  }
+  window.__offnoteSetBgm = function (on) {
+    var bgm = document.getElementById('offnote-bgm');
+    var nodes = document.querySelectorAll('audio, video');
+    if (!on) {
+      if (bgm) {
+        bgm.__offnoteBackground = true;
+        bgm.__offnoteHeld = true;
+        bgm.__offnoteWant = false;
+        bgm.__offnoteTime = bgm.currentTime || 0;
+        if (!bgm.__offnoteSrc) bgm.__offnoteSrc = bgm.currentSrc || bgm.src || bgm.getAttribute('src') || '';
+        bgm.muted = true;
+        bgm.volume = 0;
+        try { bgm.pause(); } catch (e) {}
+        try { bgm.removeAttribute('src'); bgm.load(); } catch (e) {}
+      }
+      for (var i = 0; i < nodes.length; i++) {
+        if (nodes[i] === bgm) continue;
+        nodes[i].__offnoteWasPlaying = !nodes[i].paused;
+        try { nodes[i].pause(); } catch (e) {}
+      }
+      return;
+    }
+    if (bgm) {
+      bgm.__offnoteBackground = false;
+      bgm.muted = false;
+      bgm.volume = 1;
+      if (bgm.__offnoteSrc && !bgm.getAttribute('src')) {
+        bgm.src = bgm.__offnoteSrc;
+        var t = bgm.__offnoteTime || 0;
+        bgm.addEventListener('loadedmetadata', function () {
+          try { if (Math.abs((bgm.currentTime || 0) - t) > 0.4) bgm.currentTime = t; } catch (e) {}
+        });
+      }
+      if (bgm.__offnoteHeld) {
+        bgm.__offnoteHeld = false;
+        bgm.__offnoteWant = true;
+        try { bgm.play(); } catch (e) {}
+      }
+    }
+    for (var j = 0; j < nodes.length; j++) {
+      if (nodes[j] === bgm || !nodes[j].__offnoteWasPlaying) continue;
+      nodes[j].__offnoteWasPlaying = false;
+      try { nodes[j].play(); } catch (e) {}
+    }
+  };
+  if (!window.__offnoteBgmWatch) {
+    window.__offnoteBgmWatch = true;
+    function onHide() { window.__offnoteSetBgm(false); }
+    function onShow() { if (!pageHidden()) window.__offnoteSetBgm(true); }
+    document.addEventListener('visibilitychange', function () {
+      if (pageHidden()) onHide(); else onShow();
+    });
+    document.addEventListener('webkitvisibilitychange', function () {
+      if (pageHidden()) onHide(); else onShow();
+    });
+    window.addEventListener('pagehide', onHide);
+    window.addEventListener('pageshow', onShow);
+    document.addEventListener('freeze', onHide);
+    document.addEventListener('resume', onShow);
+  }
+  armBgm();
   if (window.__offnoteExtrasReady) return;
   window.__offnoteExtrasReady = true;
 
@@ -296,10 +395,13 @@ export const EXTRAS_BOOT_JS = `
     pausing = false;
     if (!current) {
       playIndex = i;
-      if (bgm && !bgm.__offnoteHold) syncBgm(true);
+      syncBgm(true);
       return;
     }
-    if (current.__offnoteHold && i === playIndex) return;
+    if (current.__offnoteHold && i === playIndex) {
+      syncBgm(true);
+      return;
+    }
     playIndex = i;
     current.__offnoteHold = false;
     var next = videoAt(i + 1);
@@ -314,16 +416,36 @@ export const EXTRAS_BOOT_JS = `
   function syncBgm(on) {
     if (!bgm) return;
     if (on) {
+      bgm.__offnoteWant = true;
       var p;
       try { p = bgm.play(); } catch (e) {}
       if (p && p.then) p.catch(function () {});
     } else {
+      bgm.__offnoteWant = false;
       try { bgm.pause(); } catch (e) {}
     }
   }
   if (bgm) {
     bgm.loop = true;
-    videos.forEach(function (v) { v.muted = true; });
+    bgm.setAttribute('playsinline', '');
+    videos.forEach(function (v) {
+      v.muted = true;
+      v.setAttribute('muted', '');
+    });
+    // 实况或视频开始时，系统常会把这条音乐暂停。音乐自己接着播。
+    if (!bgm.__offnoteBound) {
+      bgm.__offnoteBound = true;
+      bgm.addEventListener('pause', function () {
+        if (!bgm.__offnoteWant) return;
+        setTimeout(function () {
+          if (!bgm.__offnoteWant || !bgm.paused) return;
+          var p;
+          try { p = bgm.play(); } catch (e) {}
+          if (p && p.then) p.catch(function () {});
+        }, 80);
+      });
+    }
+    syncBgm(true);
   }
 
   videos.forEach(function (v) {
@@ -332,15 +454,10 @@ export const EXTRAS_BOOT_JS = `
       if (pausing) return;
       var slide = slideOf(v);
       var i = slide && track ? Array.prototype.indexOf.call(track.children, slide) : 0;
-      if (i === activeIndex()) {
-        v.__offnoteHold = true;
-        if (bgm) bgm.__offnoteHold = true;
-        syncBgm(false);
-      }
+      if (i === activeIndex()) v.__offnoteHold = true;
     });
     v.addEventListener('play', function () {
       v.__offnoteHold = false;
-      if (bgm) bgm.__offnoteHold = false;
       syncBgm(true);
     });
     v.addEventListener('ended', function () {

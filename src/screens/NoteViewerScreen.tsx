@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
+  AppState,
   BackHandler,
   Easing,
   Keyboard,
@@ -236,6 +237,22 @@ true;
     });
     return () => {
       alive = false;
+    };
+  }, [note?.id]);
+
+  useEffect(() => {
+    if (!note) return;
+    const sub = AppState.addEventListener('change', (next) => {
+      const playing = next === 'active';
+      webRef.current?.injectJavaScript(
+        `window.__offnoteSetBgm && window.__offnoteSetBgm(${playing}); true;`,
+      );
+    });
+    return () => {
+      webRef.current?.injectJavaScript(
+        'window.__offnoteSetBgm && window.__offnoteSetBgm(false); true;',
+      );
+      sub.remove();
     };
   }, [note?.id]);
 

@@ -224,11 +224,11 @@ const XHS_CSS = `
   }
 `;
 
-function mediaTag(m: NoteMedia, poster?: string): string {
+function mediaTag(m: NoteMedia, poster?: string, muted?: boolean): string {
   if (m.kind === 'video') {
-    return `<video src="${escape(m.filename)}" controls playsinline preload="metadata"${
-      poster ? ` poster="${escape(poster)}"` : ''
-    }></video>`;
+    return `<video src="${escape(m.filename)}" controls playsinline webkit-playsinline preload="metadata"${
+      muted ? ' muted' : ''
+    }${poster ? ` poster="${escape(poster)}"` : ''}></video>`;
   }
   return `<img src="${escape(m.filename)}" alt="" loading="lazy">`;
 }
@@ -237,7 +237,7 @@ function singleMediaHtml(input: RenderInput): string {
   const m = input.media[0];
   if (!m) return '';
   const poster = m.kind === 'video' ? input.thumbnailFilename : undefined;
-  return `<div class="single">${mediaTag(m, poster)}</div>`;
+  return `<div class="single">${mediaTag(m, poster, !!input.audioFilename)}</div>`;
 }
 
 function carouselHtml(input: RenderInput): string {
@@ -246,7 +246,7 @@ function carouselHtml(input: RenderInput): string {
     .map((m, i) => {
       const poster =
         i === 0 && m.kind === 'video' ? input.thumbnailFilename : undefined;
-      return `<div class="slide" data-index="${i + 1}">${mediaTag(m, poster)}</div>`;
+      return `<div class="slide" data-index="${i + 1}">${mediaTag(m, poster, !!input.audioFilename)}</div>`;
     })
     .join('\n');
 
@@ -312,7 +312,7 @@ export function renderNoteHtml(input: RenderInput): string {
 
   const mediaBlock = total > 1 ? carouselHtml(input) : singleMediaHtml(input);
   const audioBlock = input.audioFilename
-    ? `<audio id="offnote-bgm" src="${escape(input.audioFilename)}" loop preload="auto"></audio>`
+    ? `<audio id="offnote-bgm" src="${escape(input.audioFilename)}" loop autoplay preload="auto" playsinline></audio>`
     : '';
 
   const sourceLine = input.sourceUrl
@@ -341,7 +341,7 @@ export function renderNoteHtml(input: RenderInput): string {
   html, body { margin: 0; padding: 0; background: #0d0d0e; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.55; }
   .wrap { max-width: 720px; margin: 0 auto; padding: 16px 16px 48px; }
   .author { font-weight: 600; font-size: 15px; color: #fff; margin-bottom: 10px; }
-  #offnote-bgm { position: absolute; width: 0; height: 0; opacity: 0; }
+  #offnote-bgm { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0.02; pointer-events: none; }
 
   /* Single media */
   .single { background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 12px; }
