@@ -82,11 +82,21 @@ const HOOK_JS = `
   window.__offnoteHooked = true;
   window.__offnoteApis = [];
   window.__offnoteCaptured = [];
+  window.__offnoteRaw = [];
   function consider(url, text) {
     try {
       url = String(url || '');
       if (window.__offnoteApis.length < 40) window.__offnoteApis.push(url.slice(0, 160));
-      if (!text || typeof text !== 'string' || text.indexOf('aweme_id') < 0) return;
+      if (!text || typeof text !== 'string') return;
+      var hasImages = text.indexOf('aweme-images') >= 0;
+      var hasId = text.indexOf('aweme_id') >= 0 || text.indexOf('awemeId') >= 0;
+      if (hasImages) {
+        window.__offnoteRaw.push(text);
+        if (window.__offnoteRaw.length > 3) window.__offnoteRaw.shift();
+      } else if (hasId && window.__offnoteRaw.length < 2) {
+        window.__offnoteRaw.push(text);
+      }
+      if (!hasId) return;
       var j = JSON.parse(text);
       window.__offnoteCaptured.push(j);
       if (window.__offnoteCaptured.length > 5) window.__offnoteCaptured.shift();
@@ -171,6 +181,54 @@ const GRAB_JS = `
     }
   }, 500);
 
+  // 电脑版图文的作品在页面脚本 __pace_f 里，字段是 awemeId / images，不是 aweme_id
+  function readJsonAt(text, start) {
+    if (!text || text.charAt(start) !== '{') return null;
+    var depth = 0;
+    var inStr = false;
+    var esc = false;
+    for (var i = start; i < text.length; i++) {
+      var c = text.charAt(i);
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}') {
+        depth--;
+        if (depth === 0) {
+          try { return JSON.parse(text.slice(start, i + 1)); } catch (e) { return null; }
+        }
+      }
+    }
+    return null;
+  }
+
+  function paceRoots() {
+    var chunks = window.__pace_f || [];
+    var roots = [];
+    for (var i = 0; i < chunks.length; i++) {
+      var row = chunks[i];
+      var text = typeof row === 'string' ? row : (row && row[1]) || '';
+      if (!text || (text.indexOf('awemeId') < 0 && text.indexOf('aweme_id') < 0)) continue;
+      var from = 0;
+      var found = 0;
+      while (found < 6) {
+        var a = text.indexOf('{"awemeId"', from);
+        var b = text.indexOf('{"aweme_id"', from);
+        var at = a < 0 ? b : b < 0 ? a : Math.min(a, b);
+        if (at < 0) break;
+        var obj = readJsonAt(text, at);
+        if (obj) { roots.push(obj); found++; }
+        from = at + 12;
+      }
+    }
+    return roots;
+  }
+
   function getRoot() {
     try {
       if (window._ROUTER_DATA) return window._ROUTER_DATA;
@@ -178,6 +236,22 @@ const GRAB_JS = `
       if (el && el.textContent) return JSON.parse(decodeURIComponent(el.textContent));
       if (window.__INITIAL_STATE__) return window.__INITIAL_STATE__;
     } catch (e) {}
+    return null;
+  }
+
+  // 图文详情挂在 aweme.detail 上，旁边还有整页评论，不能靠全树搜索去碰运气
+  function paceDetail() {
+    var want = pageAwemeId();
+    var roots = paceRoots();
+    for (var i = 0; i < roots.length; i++) {
+      var root = roots[i] || {};
+      var aweme = root.aweme || {};
+      var detail = aweme.detail || aweme.awemeDetail || null;
+      if (!detail || typeof detail !== 'object') continue;
+      var id = idOf(detail) || idOf(root);
+      if (want && id && id !== want) continue;
+      if ((detail.images && detail.images.length) || detail.desc) return detail;
+    }
     return null;
   }
 
@@ -276,10 +350,13 @@ const GRAB_JS = `
   }
 
   function pickItem() {
+    var pace = paceDetail();
     var a = findItem(capturedRoot());
     var b = findItem(getRoot());
-    if (scoreItem(b) > scoreItem(a)) return b;
-    return a || b;
+    var best = a;
+    if (scoreItem(b) > scoreItem(best)) best = b;
+    if (scoreItem(pace) > scoreItem(best)) best = pace;
+    return best || pace;
   }
 
   function urlOf(obj, preferJpeg) {
@@ -302,19 +379,56 @@ const GRAB_JS = `
     return dot >= 0 ? name.slice(dot + 1) : '';
   }
 
+  function srcList(addr) {
+    if (!addr) return [];
+    if (typeof addr === 'string') return addr.indexOf('http') === 0 ? [addr] : [];
+    if (Array.isArray(addr)) {
+      var out = [];
+      for (var i = 0; i < addr.length; i++) {
+        var it = addr[i];
+        if (typeof it === 'string') {
+          if (it.indexOf('http') === 0) out.push(it);
+        } else if (it && typeof it === 'object') {
+          if (typeof it.src === 'string' && it.src.indexOf('http') === 0) out.push(it.src);
+          else {
+            var nested = urlOf(it);
+            if (nested) out.push(nested);
+          }
+        }
+      }
+      return out;
+    }
+    var one = urlOf(addr);
+    return one ? [one] : [];
+  }
+
+  function pickPlayable(urls) {
+    var video = '';
+    var any = '';
+    for (var i = 0; i < urls.length; i++) {
+      var u = urls[i];
+      if (!u || u.indexOf('http') !== 0) continue;
+      if (!any) any = u;
+      if (isAudioUrl(u)) continue;
+      if (u.indexOf('douyinvod.com') >= 0 || u.indexOf('/video/tos/') >= 0) return u;
+      if (!video) video = u;
+    }
+    return video || any;
+  }
+
   function playUrl(video) {
     if (!video || typeof video !== 'object') return '';
-    var rates = video.bit_rate || video.bitRate || [];
+    var rates = video.bit_rate || video.bitRate || video.bitRateList || video.bit_rate_list || [];
     var best = '';
     var bestBr = -1;
     for (var i = 0; i < rates.length; i++) {
       var rate = rates[i] || {};
-      var u = urlOf(rate.play_addr || rate.playAddr);
+      var u = pickPlayable(srcList(rate.play_addr || rate.playAddr));
       var br = Number(rate.bit_rate || rate.bitRate || 0);
-      if (u && br >= bestBr) { best = u; bestBr = br; }
+      if (u && !isAudioUrl(u) && br >= bestBr) { best = u; bestBr = br; }
     }
     if (best) return best;
-    return urlOf(video.play_addr || video.playAddr) || urlOf(video.download_addr || video.downloadAddr) || '';
+    return pickPlayable(srcList(video.play_addr || video.playAddr)) || pickPlayable(srcList(video.download_addr || video.downloadAddr)) || '';
   }
 
   function stillOf(img) {
@@ -366,65 +480,245 @@ const GRAB_JS = `
     return list[0] || '';
   }
 
+  function isAudioUrl(u) {
+    u = String(u || '');
+    if (u.indexOf('/obj/ies-music') >= 0) return true;
+    var path = u.split('?')[0].toLowerCase();
+    return path.endsWith('.mp3') || path.endsWith('.m4a') || path.endsWith('.aac');
+  }
+
   function domVideos() {
     var out = [];
     var seen = {};
     var nodes = document.querySelectorAll('video');
     for (var i = 0; i < nodes.length; i++) {
       var u = bestSource(nodes[i]);
-      if (!u || seen[u]) continue;
+      if (!u || seen[u] || isAudioUrl(u)) continue;
       seen[u] = 1;
       out.push(u);
     }
     return out;
   }
 
+  function noteImageKey(u) {
+    var path = String(u || '').split('?')[0];
+    var name = path.slice(path.lastIndexOf('/') + 1);
+    var tilde = name.indexOf('~');
+    return tilde >= 0 ? name.slice(0, tilde) : name;
+  }
+
+  function noteImageRank(u) {
+    var path = String(u || '').split('?')[0].toLowerCase();
+    if (path.indexOf('water') >= 0) return 0;
+    if (path.indexOf('.jpeg') >= 0 || path.indexOf('.jpg') >= 0) return 3;
+    if (path.indexOf('.png') >= 0) return 2;
+    if (path.indexOf('.webp') >= 0) return 1;
+    return 1;
+  }
+
+  function cleanNoteUrl(u) {
+    return String(u || '').split('\\\\u0026').join('&').split('\\\\/').join('/');
+  }
+
+  function pushNoteImage(map, u) {
+    u = cleanNoteUrl(u);
+    if (!u || u.indexOf('aweme-images') < 0 || u.indexOf('tplv-dy-water') >= 0) return;
+    var id = noteImageKey(u);
+    if (!id || id.length < 8) return;
+    var prev = map[id];
+    if (!prev || noteImageRank(u) > noteImageRank(prev)) map[id] = u;
+  }
+
+  function scanNoteImages(text, map) {
+    if (!text) return;
+    var needle = 'aweme-images';
+    var from = 0;
+    while (from < text.length) {
+      var at = text.indexOf(needle, from);
+      if (at < 0) break;
+      var http = text.lastIndexOf('http', at);
+      if (http < 0 || at - http > 260) { from = at + needle.length; continue; }
+      var end = at + needle.length;
+      while (end < text.length) {
+        var c = text.charAt(end);
+        if (c === '"' || c === "'" || c === ' ' || c === '<' || c === ')') break;
+        end++;
+      }
+      pushNoteImage(map, text.slice(http, end));
+      from = end;
+    }
+  }
+
+  function mapToList(map) {
+    var out = [];
+    for (var id in map) out.push(map[id]);
+    return out;
+  }
+
+  // 只切当前作品 detail 里的 images 数组，不把推荐、评论里的图算进来
+  function albumSlice(text, awemeId) {
+    if (!text || !awemeId) return '';
+    var marker = '"awemeId":"' + awemeId + '"';
+    var at = text.indexOf(marker);
+    if (at < 0) return '';
+    var key = '"images":[';
+    var imgAt = text.indexOf(key, at);
+    if (imgAt < 0 || imgAt - at > 150000) return '';
+    var depth = 0;
+    var inStr = false;
+    var esc = false;
+    for (var i = imgAt + key.length - 1; i < text.length; i++) {
+      var c = text.charAt(i);
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === '[') depth++;
+      else if (c === ']') {
+        depth--;
+        if (depth === 0) return text.slice(imgAt, i + 1);
+      }
+    }
+    return '';
+  }
+
+  function isNotePage() {
+    var path = location.pathname || '';
+    return path.indexOf('/note/') >= 0 || path.indexOf('/slides/') >= 0 || path.indexOf('/share/note') >= 0 || path.indexOf('/share/slides') >= 0;
+  }
+
+  function slideImages() {
+    var map = {};
+    var slides = document.querySelectorAll('.dySwiperSlide');
+    for (var i = 0; i < slides.length; i++) {
+      var img = slides[i].querySelector('img');
+      if (!img) continue;
+      var src = img.getAttribute('src') || img.getAttribute('data-src') || img.currentSrc || '';
+      if (src.indexOf('//') === 0) src = 'https:' + src;
+      pushNoteImage(map, src);
+    }
+    return mapToList(map);
+  }
+
+  function collectNoteImages() {
+    var seen = slideImages();
+    if (seen.length) return seen;
+    var map = {};
+    var awemeId = pageAwemeId();
+    var chunks = window.__pace_f || [];
+    for (var i = 0; i < chunks.length; i++) {
+      var row = chunks[i];
+      var text = typeof row === 'string' ? row : (row && (row[1] || row[0])) || '';
+      if (typeof text === 'string') scanNoteImages(albumSlice(text, awemeId), map);
+    }
+    var raw = window.__offnoteRaw || [];
+    for (var r = 0; r < raw.length; r++) scanNoteImages(albumSlice(raw[r], awemeId), map);
+    return mapToList(map);
+  }
+
+  function domDesc() {
+    var title = (document.title || '').replace(/\\s*-\\s*抖音\\s*$/, '').trim();
+    var needle = title.slice(0, 16);
+    if (!needle || !document.body) return '';
+    var nodes = document.body.querySelectorAll('div');
+    var best = '';
+    for (var i = 0; i < nodes.length && i < 900; i++) {
+      var el = nodes[i];
+      if (el.querySelector('.dySwiperSlide')) continue;
+      var text = (el.innerText || '').trim();
+      if (text.length < 40 || text.length > 8000) continue;
+      if (text.indexOf(needle) < 0) continue;
+      if (!best || text.length < best.length) best = text;
+    }
+    return best;
+  }
+
   function fromItem(item) {
-    var author = item.author || {};
+    var author = item.author || item.authorInfo || {};
     var stats = item.statistics || item.stats || {};
     var images = [];
     var media = [];
     var slideCover = '';
     var slides = Array.isArray(item.images) ? item.images : [];
     if (!slides.length) {
+      var gears = item.img_bitrate || item.imgBitRate || [];
+      var bestGear = null;
+      var bestW = -1;
+      for (var g = 0; g < gears.length; g++) {
+        var gear = gears[g] || {};
+        var gimgs = gear.images || [];
+        if (!gimgs.length) continue;
+        var w = Number((gimgs[0] && gimgs[0].width) || 0);
+        if (w >= bestW) { bestGear = gimgs; bestW = w; }
+      }
+      if (bestGear) slides = bestGear;
+    }
+    if (!slides.length) {
       var post = item.image_post_info || item.imagePostInfo;
       if (post && Array.isArray(post.images)) slides = post.images;
     }
+    var video = item.video || {};
+    var music = item.music || {};
+    var sharedBgm = playUrl(video) || urlOf(music.play_url || music.playUrl) || '';
+    // 同一组轮播里静图和视频页夹在一起。有自己的画面就留视频，否则留这一页的图，顺序不变。
+    var slots = [];
+    var slotAt = {};
     for (var i = 0; i < slides.length; i++) {
       var img = slides[i] || {};
       var vu = slideVideo(img);
-      if (vu) {
-        media.push({ kind: 'video', url: vu });
-        if (!slideCover) {
-          var lv = img.video || img.live_photo || img.livePhoto || {};
-          slideCover = urlOf(lv.cover || lv.origin_cover || lv.originCover, true) || stillOf(img);
-        }
-        continue;
-      }
       var still = stillOf(img);
-      if (!still) continue;
-      media.push({ kind: 'image', url: still });
-      images.push(still);
+      var clipRaw = img.clipType != null ? img.clipType : img.clip_type;
+      var clip = clipRaw == null || clipRaw === '' ? -1 : Number(clipRaw);
+      var ownVideo = !!(vu && !isAudioUrl(vu) && vu !== sharedBgm);
+      var asVideo = ownVideo && clip !== 2;
+      var kind = '';
+      var url = '';
+      var key = '';
+      if (asVideo) {
+        kind = 'video';
+        url = vu;
+        key = 'v:' + vu;
+      } else if (still) {
+        kind = 'image';
+        url = still;
+        key = 'i:' + (noteImageKey(still) || still);
+      } else if (ownVideo) {
+        kind = 'video';
+        url = vu;
+        key = 'v:' + vu;
+      }
+      if (kind) {
+        var at = slotAt[key];
+        if (at == null) {
+          slotAt[key] = slots.length;
+          slots.push({ kind: kind, url: url });
+        } else if (kind === 'image' && noteImageRank(url) > noteImageRank(slots[at].url)) {
+          slots[at].url = url;
+        }
+      }
+      if (!slideCover) {
+        var lv = img.video || img.live_photo || img.livePhoto || {};
+        slideCover = urlOf(lv.cover || lv.origin_cover || lv.originCover, true) || still || '';
+      }
     }
-    var video = item.video || {};
+    for (var si = 0; si < slots.length; si++) {
+      media.push({ kind: slots[si].kind, url: slots[si].url });
+      if (slots[si].kind === 'image') images.push(slots[si].url);
+    }
     var videoUrl = '';
     var audioUrl = '';
     if (!media.length) {
-      videoUrl = playUrl(video);
-      if (videoUrl) media.push({ kind: 'video', url: videoUrl });
-    } else if (slides.length > 1) {
-      var bgm = playUrl(video);
-      if (!bgm) {
-        var music = item.music || {};
-        bgm = urlOf(music.play_url || music.playUrl) || '';
+      if (sharedBgm && !isAudioUrl(sharedBgm)) {
+        videoUrl = sharedBgm;
+        media.push({ kind: 'video', url: sharedBgm });
+      } else if (sharedBgm) {
+        audioUrl = sharedBgm;
       }
-      if (bgm && bgm.indexOf('http') === 0) {
-        var duplicated = false;
-        for (var mi = 0; mi < media.length; mi++) {
-          if (media[mi].url === bgm) duplicated = true;
-        }
-        if (!duplicated) audioUrl = bgm;
-      }
+    } else if (sharedBgm && isAudioUrl(sharedBgm) && (images.length > 0 || media.length > 1)) {
+      audioUrl = sharedBgm;
     }
     var topics = [];
     (item.text_extra || item.textExtra || []).forEach(function (t) {
@@ -485,13 +779,44 @@ const GRAB_JS = `
     }
   }
 
+  function useNoteImages(data, pics) {
+    if (!isNotePage() || !pics.length) return;
+    var stills = 0;
+    var videoCount = 0;
+    (data.media || []).forEach(function (m) {
+      if (!m || !m.url || isAudioUrl(m.url)) return;
+      if (m.kind === 'image') stills++;
+      else if (m.kind === 'video') videoCount++;
+    });
+    // 图文和视频已经按页排好。作品自己的静图够了就用那一组，不要拿推荐区的图来替换。
+    if (stills > 0 && videoCount > 0) return;
+    if (stills > 0 && stills <= pics.length) return;
+    if (videoCount > 0 && stills === 0) return;
+    var audio = data.audioUrl || '';
+    (data.media || []).forEach(function (m) {
+      if (!audio && m && isAudioUrl(m.url)) audio = m.url;
+    });
+    if (!audio && data.videoUrl && isAudioUrl(data.videoUrl)) audio = data.videoUrl;
+    data.audioUrl = audio || data.audioUrl || '';
+    data.media = pics.map(function (u) { return { kind: 'image', url: u }; });
+    data.images = pics.slice();
+    data.videoUrl = '';
+    if (!data.cover || isAudioUrl(data.cover)) data.cover = pics[0];
+  }
+
   var lastSent = '';
   function grab(force) {
     var item = pickItem();
-    // 知道作品 id 但数据还没到时，不用推荐区里的视频充数
-    if (!item && pageAwemeId()) return;
+    var pics = collectNoteImages();
+    // 知道作品 id，但详情和图片都还没出现时先等，不用背景音乐充数
+    if (!item && pageAwemeId() && !pics.length) return;
     var data = item ? fromItem(item) : fromDom();
     if (!data.media) data.media = [];
+    useNoteImages(data, pics);
+    if (!data.desc) {
+      var written = domDesc();
+      if (written) data.desc = written;
+    }
     if (item && !data.media.length && !pageAwemeId()) {
       var dom = fromDom();
       data.media = dom.media || [];
