@@ -119,6 +119,14 @@ export default function HomeScreen() {
     [notes, effectiveFilter, query, tagKeys],
   );
 
+  const bulkCategoryMark = useMemo(() => {
+    const selected = notes.filter((n) => selectedIds.has(n.id));
+    if (selected.length === 0) return { categoryId: undefined as string | undefined };
+    const first = selected[0].categoryId;
+    if (selected.every((n) => n.categoryId === first)) return { categoryId: first };
+    return null;
+  }, [notes, selectedIds]);
+
   const categoryOptions: CategoryOption[] = useMemo(
     () => [
       { value: CATEGORY_ALL, label: '不限' },
@@ -574,6 +582,7 @@ export default function HomeScreen() {
             : null
         }
         categories={categories}
+        mark={bulkCategoryMark}
         onPick={handleBulkPickCategory}
         onDismiss={() => setBulkMoveVisible(false)}
       />

@@ -26,8 +26,10 @@ import {
 import { WebView } from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview';
 
+import MoveToCategorySheet from '../components/MoveToCategorySheet';
 import TagSelectList from '../components/TagSelectList';
 import TextPromptModal from '../components/TextPromptModal';
+import { listCategories, type Category } from '../lib/categories';
 import {
   addHighlight,
   addSnapshot,
@@ -76,6 +78,8 @@ export default function NoteViewerScreen({
   const [remarkDraft, setRemarkDraft] = useState('');
   const [tagEditing, setTagEditing] = useState(false);
   const [tagDraft, setTagDraft] = useState<string[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryOpen, setCategoryOpen] = useState(false);
   /** 正在重命名的高光 id */
   const [renamingHl, setRenamingHl] = useState<string | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -193,6 +197,7 @@ true;
       setRemarkDraft('');
       setTagEditing(false);
       setTagDraft([]);
+      setCategoryOpen(false);
       htmlSyncRef.current = null;
       return;
     }
@@ -221,8 +226,30 @@ true;
   }, [note]);
 
   useEffect(() => {
+    if (!note) {
+      setCategories([]);
+      return;
+    }
+    let alive = true;
+    listCategories().then((cats) => {
+      if (alive) setCategories(cats);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [note?.id]);
+
+  const categoryName = note?.categoryId
+    ? categories.find((c) => c.id === note.categoryId)?.name
+    : undefined;
+
+  useEffect(() => {
     if (!note) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (categoryOpen) {
+        setCategoryOpen(false);
+        return true;
+      }
       if (actionsOpen) {
         setActionsOpen(false);
         return true;
@@ -245,7 +272,7 @@ true;
       return true;
     });
     return () => sub.remove();
-  }, [note, lightbox, remarkMode, tagEditing, actionsOpen, onClose]);
+  }, [note, lightbox, remarkMode, tagEditing, actionsOpen, categoryOpen, onClose]);
 
   const openRemark = () => {
     if (!note) return;
@@ -257,6 +284,18 @@ true;
     if (!note) return;
     setTagDraft(note.tags ?? []);
     setTagEditing(true);
+  };
+
+  const openCategory = () => {
+    if (!note) return;
+    setCategoryOpen(true);
+  };
+
+  const handlePickCategory = async (categoryId: string | undefined) => {
+    setCategoryOpen(false);
+    if (!note || note.categoryId === categoryId) return;
+    const updated = await updateNote(note.id, { categoryId });
+    if (updated) onUpdated?.(updated);
   };
 
   const closeTags = () => {
@@ -760,6 +799,12 @@ true;
             [
               { label: '备注', icon: 'document-text-outline', onPress: openRemark },
               { label: '标签', icon: 'pricetag-outline', onPress: openTags },
+              {
+                label: '分类',
+                icon: 'folder-outline',
+                onPress: openCategory,
+                hint: categoryName ?? (note?.categoryId ? '' : '未分类'),
+              },
               { label: '删除', icon: 'trash-outline', onPress: handleDelete, danger: true },
             ] as const
           ).map((item) => (
@@ -784,6 +829,14 @@ true;
               >
                 {item.label}
               </Text>
+              {'hint' in item && item.hint ? (
+                <Text
+                  style={[styles.actionHint, { color: isDark ? '#9a9a9a' : '#888' }]}
+                  numberOfLines={1}
+                >
+                  {item.hint}
+                </Text>
+              ) : null}
             </Pressable>
           ))}
           <View style={[styles.actionDivider, { backgroundColor: barBorder }]} />
@@ -800,6 +853,12 @@ true;
         </Animated.View>
       </View>
     </Modal>
+    <MoveToCategorySheet
+      note={categoryOpen ? note : null}
+      categories={categories}
+      onPick={handlePickCategory}
+      onDismiss={() => setCategoryOpen(false)}
+    />
     </>
   );
 }
@@ -912,6 +971,12 @@ const styles = StyleSheet.create({
   actionLabel: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  actionHint: {
+    marginLeft: 'auto',
+    flexShrink: 1,
+    fontSize: 13,
+    fontWeight: '400',
   },
   actionDivider: {
     height: StyleSheet.hairlineWidth,

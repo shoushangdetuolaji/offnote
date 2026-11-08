@@ -16,6 +16,13 @@ type Props = {
   /** When non-null the sheet is presented and shows targets for moving this note */
   note: Note | null;
   categories: Category[];
+  /**
+   * 勾选哪一项。
+   * 不传：用这条笔记自己的分类，没有就是未分类。
+   * null：多条笔记分类不一致，哪一项都不勾。
+   * `{ categoryId: undefined }`：明确勾未分类。
+   */
+  mark?: { categoryId: string | undefined } | null;
   onPick: (categoryId: string | undefined) => void;
   onDismiss: () => void;
 };
@@ -25,6 +32,7 @@ type Row = { id: string | undefined; label: string };
 export default function MoveToCategorySheet({
   note,
   categories,
+  mark,
   onPick,
   onDismiss,
 }: Props) {
@@ -34,7 +42,7 @@ export default function MoveToCategorySheet({
     { id: undefined, label: '未分类' },
     ...categories.map((c) => ({ id: c.id, label: c.name })),
   ];
-  const currentId = note?.categoryId;
+  const currentId = mark === undefined ? note?.categoryId : mark === null ? null : mark.categoryId;
   const needScroll = rows.length > 5;
 
   return (
@@ -63,7 +71,7 @@ export default function MoveToCategorySheet({
             keyboardShouldPersistTaps="handled"
           >
             {rows.map((row, idx) => {
-              const active = currentId === row.id;
+              const active = currentId !== null && currentId === row.id;
               return (
                 <Pressable
                   key={row.id ?? '__none__'}
